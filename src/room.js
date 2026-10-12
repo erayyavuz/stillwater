@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { Deck } from './deck.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { frameRect, bar, SASH, SASH_W, FRAME, FRAME_W, CASING, CASING_W, MUNTIN } from './profile.js';
 
 // Cabin interior, in metres. The glass sits in the plane z = 0, the room is z > 0.
 export const WIN = { x0: -0.6, x1: 0.6, y0: 0.97, y1: 2.13 }; // glass extents (both sashes)
@@ -38,6 +41,27 @@ function box(w, h, d, mat, r = 0.004) {
   return m;
 }
 
+// Old painted wood: the scan's bare-wood patches show through, its paint is replaced by our colour.
+function paint(mat, hex) {
+  const c = new THREE.Color(hex);
+  mat.customProgramCacheKey = () => 'paint' + hex;
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uPaint = { value: c };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uPaint;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          vec3 t = diffuseColor.rgb;
+          float wood = smoothstep(0.07, 0.17, t.r - t.b);
+          float l = dot(t, vec3(.3, .59, .11));
+          vec3 p = uPaint * (0.78 + 1.6 * l) ;
+          diffuseColor.rgb = mix(p, t * 1.1, wood);
+        }`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor * 0.8, roughnessFactor, 0.5);');
+  };
+  return mat;
+}
+
 export class Room {
   constructor(scene) {
     this.scene = scene;
@@ -45,71 +69,114 @@ export class Room {
     scene.add(this.group);
     const wallMat = pbr('wood_plank_wall', [0.8, 0.8], { color: 0xb8a690 });
     const sillMat = pbr('wood_table_worn', [1.2, 1.2]);
-    const frameMat = pbr('wood_cabinet_worn_long', [2, 2], { color: 0xd2c2ad });
+    const frameMat = paint(pbr('wood_peeling_paint_weathered', [3, 3], { side: THREE.DoubleSide }), 0xd8d0bf);
+    const liningMat = paint(pbr('wood_peeling_paint_weathered', [3, 3]), 0xcfc6b4);
     this.frameMat = frameMat;
+    const brass = new THREE.MeshStandardMaterial({ color: 0xc09a58, metalness: 1, roughness: 0.28, envMapIntensity: 1.6 });
+    const iron = new THREE.MeshStandardMaterial({ color: 0x2a2724, metalness: 0.8, roughness: 0.5 });
 
-    // wall with a window hole (inner face at z = 0.12)
-    const T = 0.24, zc = 0.12 - T / 2;
     const { x0, x1, y0, y1 } = WIN;
-    const ox0 = x0 - 0.02, ox1 = x1 + 0.02, oy0 = SILL_Y, oy1 = y1 + 0.02;
+    const cxw = (x0 + x1) / 2, cyw = (y0 + y1) / 2;
+    // the hole in the wall is the outside of the fixed frame
+    const hx0 = x0 - FRAME_W, hx1 = x1 + FRAME_W, hy0 = SILL_Y, hy1 = y1 + FRAME_W;
+    const T = 0.24, zc = 0.12 - T / 2;
     const add = (m, x, y, z) => { m.position.set(x, y, z); this.group.add(m); return m; };
-    add(box(4, oy0, T, wallMat, 0), 0, oy0 / 2, zc);
-    add(box(4, 3.2 - oy1, T, wallMat, 0), 0, oy1 + (3.2 - oy1) / 2, zc);
-    add(box(2 - ox1, oy1 - oy0, T, wallMat, 0), ox1 + (2 - ox1) / 2, (oy0 + oy1) / 2, zc);
-    add(box(2 + ox0, oy1 - oy0, T, wallMat, 0), ox0 - (2 + ox0) / 2, (oy0 + oy1) / 2, zc);
+    add(box(4, hy0, T, wallMat, 0), 0, hy0 / 2, zc);
+    add(box(4, 3.2 - hy1, T, wallMat, 0), 0, hy1 + (3.2 - hy1) / 2, zc);
+    add(box(2 - hx1, hy1 - hy0, T, wallMat, 0), hx1 + (2 - hx1) / 2, (hy0 + hy1) / 2, zc);
+    add(box(2 + hx0, hy1 - hy0, T, wallMat, 0), hx0 - (2 + hx0) / 2, (hy0 + hy1) / 2, zc);
 
-    // casing trim around the opening, proud of the wall
-    const cw = 0.1, ct = 0.028;
-    add(box(ox1 - ox0 + cw * 2, cw, ct, frameMat), 0, oy1 + cw / 2, 0.12 + ct / 2);
-    add(box(cw, oy1 - oy0 + cw, ct, frameMat), ox0 - cw / 2, (oy0 + oy1 + cw) / 2, 0.12 + ct / 2);
-    add(box(cw, oy1 - oy0 + cw, ct, frameMat), ox1 + cw / 2, (oy0 + oy1 + cw) / 2, 0.12 + ct / 2);
-    // jambs (reveal) inside the opening
-    add(box(0.02, oy1 - oy0, 0.15, frameMat, 0.002), ox0 + 0.01, (oy0 + oy1) / 2, 0.05);
-    add(box(0.02, oy1 - oy0, 0.15, frameMat, 0.002), ox1 - 0.01, (oy0 + oy1) / 2, 0.05);
-    add(box(ox1 - ox0, 0.02, 0.15, frameMat, 0.002), 0, oy1 - 0.01, 0.05);
+    // fixed frame (its bottom member is buried in the stool up to SILL_Y)
+    const frame = frameRect(FRAME, x1 - x0 + FRAME_W * 2, y1 - y0 + FRAME_W * 2, frameMat);
+    add(frame, cxw, cyw, 0);
+    // jamb linings between the frame and the room face of the wall
+    const ld = 0.12 - 0.05, lt = 0.016;
+    add(box(lt, hy1 - hy0, ld, liningMat, 0.002), hx0 + lt / 2, (hy0 + hy1) / 2, 0.05 + ld / 2);
+    add(box(lt, hy1 - hy0, ld, liningMat, 0.002), hx1 - lt / 2, (hy0 + hy1) / 2, 0.05 + ld / 2);
+    add(box(hx1 - hx0, lt, ld, liningMat, 0.002), cxw, hy1 - lt / 2, 0.05 + ld / 2);
+    // architrave: mitred at the head, butting onto the stool at the foot
+    const cw = hx1 - hx0 + CASING_W * 2, ch = hy1 - hy0 + CASING_W;
+    const casing = frameRect(CASING, cw, ch, frameMat, { sides: ['left', 'top', 'right'], butt: { 'left:bottom': 1, 'right:bottom': 1 } });
+    add(casing, cxw, hy0 + ch / 2, 0.12);
 
-    // deep sill (stool) + apron
-    const sill = add(box(1.9, 0.05, 0.5, sillMat, 0.008), 0, SILL_Y - 0.025, 0.17);
+    // deep stool with a rounded nosing, and the apron under it
+    const sill = add(box(1.9, 0.05, 0.5, sillMat, 0.012), 0, SILL_Y - 0.025, 0.17);
     sill.name = 'sill';
-    add(box(1.5, 0.09, 0.025, frameMat), 0, SILL_Y - 0.1, 0.135);
-    // outer sill beyond the glass (gets wet when the window is open)
-    add(box(ox1 - ox0, 0.03, 0.12, frameMat, 0.004), 0, SILL_Y - 0.02, -0.07);
+    this.sill = sill;
+    add(box(cw - 0.04, 0.1, 0.022, frameMat, 0.006), cxw, SILL_Y - 0.1, 0.131);
+    // outside sill beyond the glass
+    add(box(hx1 - hx0 + 0.06, 0.035, 0.16, liningMat, 0.006), cxw, y0 - FRAME_W - 0.0, -0.13);
 
     // two casement sashes, hinged at the outer edges, swinging outward
     this.sashes = [];
+    const w = (x1 - x0) / 2, h = y1 - y0;
     for (const side of [-1, 1]) {
       const pivot = new THREE.Group();
       pivot.position.set(side < 0 ? x0 : x1, 0, 0);
       this.group.add(pivot);
-      const w = (x1 - x0) / 2, h = y1 - y0, sw = 0.055, sd = 0.05;
-      const sx = -side * w / 2; // sash centre relative to pivot
-      const frame = new THREE.Group();
-      frame.position.set(sx, (y0 + y1) / 2, 0);
-      const st = (bw, bh, x, y) => { const m = box(bw, bh, sd, frameMat, 0.006); m.position.set(x, y, 0); frame.add(m); };
-      st(sw, h, -w / 2 + sw / 2, 0); st(sw, h, w / 2 - sw / 2, 0);
-      st(w - sw * 2, sw, 0, h / 2 - sw / 2); st(w - sw * 2, sw * 1.3, 0, -h / 2 + sw * 0.65);
-      pivot.add(frame);
-      // glass rectangle in sash-local coords; uv covers the shared glass texture area of this pane
-      const gw = w - sw * 2 + 0.01, gh = h - sw * 2.3 + 0.01;
+      const sx = -side * w / 2;
+      const sash = new THREE.Group();
+      sash.position.set(sx, cyw, 0);
+      sash.add(frameRect(SASH, w, h, frameMat));
+      // one glazing bar a little above the middle
+      const mb = bar(MUNTIN, w - SASH_W * 2 + 0.03, frameMat);
+      mb.position.y = h * 0.1;
+      sash.add(mb);
+      // hinge knuckles on the outer stile
+      for (const hy of [-h / 2 + 0.16, h / 2 - 0.16]) {
+        const k = new THREE.Mesh(new THREE.CylinderGeometry(0.0055, 0.0055, 0.075, 12), iron);
+        k.position.set(-sx, hy, -0.03); k.castShadow = true;
+        sash.add(k);
+      }
+      // casement stay resting along the bottom rail
+      const stay = new THREE.Group();
+      const arm = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.011, 0.006, 2, 0.003), brass);
+      arm.position.x = side * 0.11;
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.008, 14, 10), brass);
+      knob.position.x = side * 0.225;
+      const plate = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.026, 0.004, 2, 0.002), brass);
+      stay.add(arm, knob, plate);
+      stay.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      stay.position.set(-sx - side * 0.0 + side * -0.0 + (side < 0 ? -w / 2 + 0.07 : w / 2 - 0.07) * -1 * -1, -h / 2 + 0.03, 0.028);
+      stay.position.x = side < 0 ? -w / 2 + 0.08 : w / 2 - 0.08;
+      stay.scale.x = side < 0 ? -1 : 1;
+      sash.add(stay);
+      pivot.add(sash);
+      // glass behind the ovolo; its world rect maps into the shared drop/mist textures
+      const inset = 0.044;
+      const gw = w - inset * 2, gh = h - inset * 2;
       const glass = new THREE.Mesh(new THREE.PlaneGeometry(gw, gh), null);
-      glass.position.set(0, (sw * 1.3 - sw) / 2 * -0.0 + 0.004, 0.0);
-      // world-space glass rect (closed) used to map into the shared drop/fog textures
-      const cx = (side < 0 ? x0 : x1) + sx, cy = (y0 + y1) / 2 + 0.004;
-      glass.userData.rect = { x0: cx - gw / 2, x1: cx + gw / 2, y0: cy - gh / 2, y1: cy + gh / 2 };
-      frame.add(glass);
-      this.sashes.push({ pivot, frame, glass, side, open: 0 });
+      sash.add(glass);
+      const cx = (side < 0 ? x0 : x1) + sx;
+      glass.userData.rect = { x0: cx - gw / 2, x1: cx + gw / 2, y0: cyw - gh / 2, y1: cyw + gh / 2 };
+      this.sashes.push({ pivot, frame: sash, glass, side, open: 0 });
     }
-    // latch on the right sash's meeting stile
+
+    // cockspur fastener on the right sash's meeting stile
     const latch = new THREE.Group();
-    const brass = new THREE.MeshStandardMaterial({ color: 0xb08a4a, metalness: 1, roughness: 0.32 });
-    const base = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.07, 0.012, 2, 0.004), brass);
-    const lever = new THREE.Mesh(new RoundedBoxGeometry(0.018, 0.1, 0.014, 2, 0.006), brass);
-    lever.position.set(0, -0.04, 0.012); lever.geometry.translate(0, -0.03, 0);
-    base.castShadow = lever.castShadow = true;
+    const base = new THREE.Mesh(new RoundedBoxGeometry(0.026, 0.075, 0.008, 3, 0.0035), brass);
+    const lever = new THREE.Group();
+    const spine = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0, 0.012), new THREE.Vector3(0.003, -0.03, 0.016), new THREE.Vector3(0.012, -0.065, 0.02), new THREE.Vector3(0.026, -0.092, 0.019),
+    ]);
+    const handle = new THREE.Mesh(new THREE.TubeGeometry(spine, 24, 0.0042, 10), brass);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0075, 16, 12), brass);
+    ball.position.set(0.027, -0.094, 0.019);
+    const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.009, 0.012, 16), brass);
+    boss.rotation.x = Math.PI / 2; boss.position.z = 0.008;
+    const spur = new THREE.Mesh(new RoundedBoxGeometry(0.024, 0.008, 0.008, 2, 0.003), brass);
+    spur.position.set(-0.014, 0.004, 0.011);
+    lever.add(handle, ball, boss, spur);
     latch.add(base, lever);
-    latch.position.set(-(x1 - x0) / 2 + 0.03, 1.52, 0.032);
+    latch.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    latch.position.set(-w + SASH_W / 2 + 0.004, cyw + 0.02, 0.025 + 0.004);
     this.sashes[1].pivot.add(latch);
     this.latch = latch; this.lever = lever;
+    // the keep it hooks onto, on the left sash
+    const keep = new THREE.Mesh(new RoundedBoxGeometry(0.02, 0.03, 0.01, 2, 0.003), brass);
+    keep.position.set(w - SASH_W / 2 + 0.006, cyw + 0.024, 0.03);
+    keep.castShadow = true;
+    this.sashes[0].pivot.add(keep);
 
     // room fill: soft light bouncing around, very low
     this.hemi = new THREE.HemisphereLight(0x8a7a6a, 0x2a1d14, 0.15);
@@ -123,8 +190,11 @@ export class Room {
     Object.assign(this.day.shadow.camera, { left: -1.5, right: 1.5, top: 1.5, bottom: -1.5, near: 0.5, far: 8 });
     this.day.shadow.bias = -0.0004; this.day.shadow.normalBias = 0.02;
     scene.add(this.day, this.day.target);
-    this.skyFill = new THREE.PointLight(0xffffff, 0, 4, 2);
-    this.skyFill.position.set(0, 1.55, -0.3);
+    // the whole window glows into the room: a rectangular area light in the glass
+    RectAreaLightUniformsLib.init();
+    this.skyFill = new THREE.RectAreaLight(0xffffff, 0, WIN.x1 - WIN.x0, WIN.y1 - WIN.y0);
+    this.skyFill.position.set((WIN.x0 + WIN.x1) / 2, (WIN.y0 + WIN.y1) / 2, -0.03);
+    this.skyFill.lookAt(this.skyFill.position.x, this.skyFill.position.y, 1);
     scene.add(this.skyFill);
 
     this.props = {};
@@ -148,31 +218,35 @@ export class Room {
       });
       return g.scene;
     });
-    const [candle, lamp, tea, tape, clock, plant] = await Promise.all(
-      ['wooden_candlestick', 'vintage_oil_lamp', 'tea_set_01', 'portable_cassette_player', 'alarm_clock_01', 'potted_plant_04'].map(load));
+    const [candle, lamp, tea, clock, plant] = await Promise.all(
+      ['wooden_candlestick', 'vintage_oil_lamp', 'tea_set_01', 'alarm_clock_01', 'potted_plant_04'].map(load));
+    this.deck = new Deck();
+    const tape = this.deck.root;
     const put = (o, x, z, ry = 0, s = 1) => { o.position.set(x, SILL_Y, z); o.rotation.y = ry; o.scale.setScalar(s); this.group.add(o); return o; };
 
     put(lamp, -0.74, 0.28, 0.4, 0.9);
-    put(plant, -0.43, 0.13, 0.8);
-    put(candle, -0.16, 0.24, 0);
-    // tea: keep one cup on its saucer
-    const cup = tea.getObjectByName('tea_set_01_cup_small_01');
-    const saucer = tea.getObjectByName('tea_set_01_saucer_circular_04');
-    const teaG = new THREE.Group();
-    for (const o of [cup, saucer]) { o.position.x = 0; o.position.z = 0; teaG.add(o); }
-    put(teaG, 0.17, 0.3, -0.5);
-    put(tape, 0.47, 0.17, -0.25);
-    // the tape player stands upright facing the room
-    put(clock, 0.74, 0.25, -0.45);
+    put(plant, -0.5, 0.14, 0.8);
+    put(candle, -0.27, 0.25, 0);
+    put(tape, 0.52, 0.2, -0.28);
+    put(clock, 0.82, 0.3, -0.5);
+    this.teaScene = tea;
 
-    this.props = { candle, lamp, cup: teaG, tape, clock, plant };
-    // name the clickable roots
+    this.props = { candle, lamp, tape, clock, plant };
+    // name the clickable roots; heavy scans get a simple invisible box to click instead of their mesh
     for (const [k, o] of Object.entries(this.props)) o.traverse(m => { m.userData.prop = k; });
+    this.proxies = [];
+    const hidden = new THREE.MeshBasicMaterial({ visible: false });
+    for (const k of ['candle', 'lamp', 'plant', 'clock']) {
+      const b = new THREE.Box3().setFromObject(this.props[k]);
+      const px = new THREE.Mesh(new THREE.BoxGeometry(...b.getSize(new THREE.Vector3()).toArray()), hidden);
+      b.getCenter(px.position); px.userData.prop = k;
+      this.scene.add(px); this.proxies.push(px);
+    }
 
     // warm lights
     this.candleLight = new THREE.PointLight(0xff9a48, 0, 5, 2);
-    this.candleLight.position.set(-0.16, SILL_Y + 0.29, 0.24);
-    this.candleLight.castShadow = true;
+    this.candleLight.position.set(-0.27, SILL_Y + 0.29, 0.25);
+    this.candleLight.castShadow = false; // a point-light shadow per pixel was the main cost
     this.candleLight.shadow.mapSize.set(512, 512);
     this.candleLight.shadow.bias = -0.002;
     this.candleLight.shadow.camera.near = 0.03;
@@ -189,9 +263,42 @@ export class Room {
     if (flame) { this.lampFlame = flame; flame.material = new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true }); }
     const glass = lamp.getObjectByName('vintage_oil_lamp_glass');
     if (glass) {
-      // clear chimney glass that warms up when the lamp is lit
-      this.chimney = glass.material = new THREE.MeshStandardMaterial({ color: 0xfff4e6, transparent: true, opacity: 0.16, roughness: 0.05, emissive: 0xffa040, emissiveIntensity: 0, depthWrite: false });
-      glass.castShadow = false;
+      // clear chimney glass: two passes (inside wall, then outside wall) of a fresnel shader
+      this.chimney = { uniforms: { uLamp: { value: 0 }, uFlameY: { value: 0 }, uSky: { value: new THREE.Color(0.5, 0.55, 0.6) }, uWarm: { value: new THREE.Color(1, 0.62, 0.3) } } };
+      const mk = (sideMode, order) => {
+        const m = new THREE.ShaderMaterial({
+          uniforms: this.chimney.uniforms, transparent: true, depthWrite: false, side: sideMode,
+          vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vW; varying float vY;
+            void main(){ vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vY = position.y;
+              vN = normalize(mat3(modelMatrix) * normal); vV = normalize(cameraPosition - w.xyz);
+              gl_Position = projectionMatrix * viewMatrix * w; }`,
+          fragmentShader: `uniform float uLamp, uFlameY; uniform vec3 uSky, uWarm;
+            varying vec3 vN; varying vec3 vV; varying vec3 vW; varying float vY;
+            void main(){
+              vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+              float c = abs(dot(n, vV));
+              float fres = 0.04 + 0.96 * pow(1. - c, 5.);
+              // the window behind the viewer is a bright rectangle: crisp vertical streaks of it
+              vec3 vn = normalize((viewMatrix * vec4(n, 0.)).xyz);
+              float streak = smoothstep(0.42, 0.47, vn.x) * smoothstep(0.62, 0.55, vn.x) + smoothstep(-0.62, -0.58, vn.x) * smoothstep(-0.5, -0.56, vn.x) * 0.5;
+              vec3 refl = uSky * (0.35 + streak * 1.8) + uWarm * uLamp * 0.5;
+              // flame light caught inside the glass, strongest near the wick
+              float glow = exp(-pow((vW.y - uFlameY) / 0.06, 2.)) * uLamp;
+              vec3 col = refl * fres + uWarm * glow * (0.25 + fres) ;
+              float a = clamp(fres * 1.15 + streak * 0.35 + glow * 0.18 + 0.025, 0., 1.);
+              gl_FragColor = vec4(col / max(a, 0.001), a);
+              #include <tonemapping_fragment>
+              #include <colorspace_fragment>
+            }`,
+        });
+        return m;
+      };
+      glass.material = mk(THREE.BackSide);
+      const outer = glass.clone(); outer.material = mk(THREE.FrontSide);
+      glass.renderOrder = 4; outer.renderOrder = 5;
+      glass.parent.add(outer);
+      glass.castShadow = outer.castShadow = false;
+      glass.userData.prop = outer.userData.prop = 'lamp';
     }
     // clock hands: pivot them about the hub (where all three overlap in the rest pose)
     const handObjs = ['houd_hand', 'minute_hand', 'second_hand'].map(n => clock.getObjectByName(n));

@@ -12,6 +12,7 @@ import { Drops, Fog, createGlassMaterial } from './glass.js';
 import { CandleFlame, Steam } from './cozy.js';
 import { Ambience } from './audio.js';
 import { Tape } from './music.js';
+import { Tea } from './tea.js';
 import { initUI } from './ui.js';
 
 const params = new URLSearchParams(location.search);
@@ -108,10 +109,12 @@ const glassMats = room.sashes.map(s => {
 });
 
 // cozy bits
-const flame = new CandleFlame(new THREE.Vector3(-0.16, SILL_Y + 0.221, 0.24));
+const flame = new CandleFlame(new THREE.Vector3(-0.27, SILL_Y + 0.221, 0.25));
 scene.add(flame.group);
+flame.attachSmoke(scene);
 if (!state.candle) { flame.target = 0; flame.lit = 0; }
-const steam = new Steam(new THREE.Vector3(0.17, SILL_Y + 0.07, 0.3), mobile ? 20 : 34);
+const steam = new Steam(new THREE.Vector3(0.2, SILL_Y + 0.07, 0.3), mobile ? 20 : 34);
+let teaSys = null;
 scene.add(steam.group);
 
 const audio = new Ambience();
@@ -182,13 +185,13 @@ const hourNow = () => { const d = new Date(); return d.getHours() + d.getMinutes
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2(), mouse = new THREE.Vector2(), mouseS = new THREE.Vector2();
 let hoverRay = null, pointer = null;
-const pickables = () => [...room.sashes.map(s => s.glass), room.latch, ...Object.values(room.props)];
+const pickables = () => [...room.sashes.map(s => s.glass), room.latch, ...(room.proxies || []), ...(room.deck ? [room.deck.root] : []), ...(teaSys ? [teaSys.cup, teaSys.saucer, teaSys.pot] : [])];
 function pick(cx, cy) {
   ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const hits = ray.intersectObjects(pickables(), true);
   for (const h of hits) {
-    let o = h.object, name = null;
+    let o = h.object, name = null, part = h.object.userData.part;
     while (o) { if (o.userData.glass) { name = 'glass'; break; } if (o === room.latch) { name = 'latch'; break; } if (o.userData.prop) { name = o.userData.prop; break; } o = o.parent; }
     if (!name) continue;
     if (name === 'glass') {
@@ -197,7 +200,7 @@ function pick(cx, cy) {
       const r = s.glass.userData.rect;
       return { name, gx: r.x0 - WIN.x0 + h.uv.x * (r.x1 - r.x0), gy: r.y0 - WIN.y0 + h.uv.y * (r.y1 - r.y0), point: h.point };
     }
-    return { name, point: h.point };
+    return { name, part, point: h.point };
   }
   return null;
 }
@@ -209,6 +212,7 @@ function onDown(e) {
   const p = pick(e.clientX, e.clientY);
   pointer = { x: e.clientX, y: e.clientY, t: performance.now(), hit: p, moved: false, last: p, breath: 0 };
   if (p && p.name === 'clock') { lapse = true; }
+  if (p && p.name === 'tape' && p.part === 'vol') { pointer.vol = tape.vol; }
 }
 function onMove(e) {
   mouse.set((e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1);
@@ -218,6 +222,7 @@ function onMove(e) {
   ui.hover(p ? p.name : null);
   if (!pointer) return;
   if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 6) pointer.moved = true;
+  if (pointer.vol !== undefined) { tape.setVolume(pointer.vol + (pointer.y - e.clientY) * 0.005 + (e.clientX - pointer.x) * 0.003); ui.toast('Volume ' + Math.round(tape.vol * 10)); return; }
   if (pointer.moved && pointer.hit && pointer.hit.name === 'glass' && p && p.name === 'glass' && pointer.last) {
     const a = pointer.last, len = Math.hypot(p.gx - a.gx, p.gy - a.gy);
     const steps = Math.max(1, Math.ceil(len / (BRUSH * 0.3)));
@@ -238,9 +243,14 @@ function onUp() {
     const n = p.hit.name;
     if (n === 'glass') { drops.knock(p.hit.gx, p.hit.gy, 1); audio.knock((p.hit.gx / 1.2) * 2 - 1); camShake = 0.004; }
     else if (n === 'candle') { const on = flame.toggle(); state.candle = !!on; on ? audio.match() : audio.blow(); save(); }
-    else if (n === 'lamp') { state.lamp = !state.lamp; lampFlick = 0.4; audio.click(0.8); save(); }
-    else if (n === 'cup') { sipT = 2.2; steam.puff = 1.5; audio.sip(); }
-    else if (n === 'tape') { const on = tape.toggle(); audio.tape(on); tapeBump = 1; ui.toast(on ? 'Tape playing' : 'Tape stopped'); }
+    else if (n === 'lamp') { shadowKick = 2; state.lamp = !state.lamp; lampFlick = 0.4; audio.click(0.8); save(); }
+    else if ((n === 'cup' || n === 'pot') && teaSys) {
+      const r = teaSys.click(n);
+      if (r === 'spill') ui.toast('Oops');
+      else if (r === 'pour') { audio.clink(); }
+      else if (r === 'full') { steam.puff = 1.5; }
+    }
+    else if (n === 'tape') tapeKey(p.hit.part);
     else if (n === 'latch') { state.open = !state.open; audio.latch(state.open); ui.toast(state.open ? 'Window open' : 'Window closed'); }
     else if (n === 'plant') { plantRustle = 1; audio.breath(); }
     else if (n === 'clock') { if (Math.abs(state.offset) > 0.01) { state.offset = 0; ui.toast('Back to now'); } else audio.tick(); }
@@ -252,11 +262,26 @@ addEventListener('pointermove', onMove);
 addEventListener('pointerup', onUp);
 addEventListener('wheel', (e) => {
   if (e.target.closest && e.target.closest('.menu')) return;
+  const hp = pick(e.clientX, e.clientY);
+  if (hp && hp.name === 'tape') { tape.setVolume(tape.vol - e.deltaY * 0.0015); ui.toast('Volume ' + Math.round(tape.vol * 10)); return; }
   state.rain = THREE.MathUtils.clamp(state.rain - e.deltaY * 0.0008, 0, 1);
   ui.toast(state.rain < 0.04 ? 'Clearing' : state.rain < 0.35 ? 'Drizzle' : state.rain < 0.75 ? 'Rain' : 'Downpour');
   save();
 }, { passive: true });
 
+function tapeKey(part) {
+  const d = room.deck;
+  if (part === 'vol') { audio.click(1.4); return; }
+  if (part === 'ff' || part === 'rew') { d.press(part); audio.tape(false); tape.wind(part === 'ff' ? 1 : -1); return; }
+  if (part === 'stop') { d.press('stop'); if (tape.on) { tape.stop(); audio.tape(false); ui.toast('Stopped'); } else audio.click(0.9); return; }
+  if (part === 'pause') { d.press('pause'); if (tape.on) { tape.stop(); audio.tape(false); ui.toast('Paused'); } return; }
+  if (part === 'rec') { d.press('rec'); audio.click(0.7); ui.toast('No blank tape in there'); return; }
+  // play, or the body itself
+  if (tape.on && part !== 'play') { tape.stop(); audio.tape(false); d.press('stop'); ui.toast('Stopped'); return; }
+  if (!tape.on) { d.press('play', true); audio.tape(true); tape.play(); ui.toast(tape.title()); }
+  tapeBump = 1;
+}
+tape.onSong = (t) => ui.toast(t);
 const actions = {
   audio, tape,
   breathe(on) { breathe = on ? 1 : 0; breatheT = 0; },
@@ -267,8 +292,8 @@ const ui = initUI(actions);
 // ---------- loop ----------
 const cur = { tod: params.get('tod') ? +params.get('tod') : lightFromHour(hourNow()), rain: state.rain, winter: winterDefault ? 1 : 0, open: state.open ? 1 : 0, lamp: state.lamp ? 1 : 0, wet: 0.6 };
 let last = performance.now(), time = 0, nextBolt = 20, frameAcc = 0, frameN = 0;
-const warm = new THREE.Color(1, 0.6, 0.3), tmpV = new THREE.Vector3(), steamCol = new THREE.Color();
-let ready = false, lastShadow = -9, frameCount = 0;
+const warm = new THREE.Color(1, 0.6, 0.3), tmpV = new THREE.Vector3(), steamCol = new THREE.Color(), tmpC = new THREE.Color();
+let ready = false, lastShadow = -9, frameCount = 0, shadowKick = 0;
 
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now; time += dt;
@@ -298,7 +323,7 @@ function frame(now) {
   renderer.toneMappingExposure = THREE.MathUtils.lerp(1.0, 1.55, e.night);
 
   for (const s of room.sashes) { s.open = cur.open; s.pivot.rotation.y = -s.side * cur.open * 1.15; }
-  room.lever.rotation.z = -cur.open * 1.4;
+  room.lever.rotation.z = Math.min(1, cur.open * 3) * 1.25;
 
   // camera: tiny head movement, a breath, a knock shake
   mouseS.x = approach(mouseS.x, mouse.x, 1.6, dt); mouseS.y = approach(mouseS.y, mouse.y, 1.6, dt);
@@ -308,6 +333,7 @@ function frame(now) {
   camera.position.set(camHome.x + mouseS.x * 0.07 + Math.sin(time * 0.11) * 0.01, camHome.y - mouseS.y * 0.035 + Math.sin(time * 0.37) * 0.003 + bz * 0.04, camHome.z - bz * 0.55);
   camera.position.x += (Math.random() - 0.5) * camShake; camera.position.y += (Math.random() - 0.5) * camShake;
   camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(mouseS.x * 0.12, -mouseS.y * 0.05 + bz * 0.1, 0)));
+  if (params.get('cam')) { const c = params.get('cam').split(',').map(Number); camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); }
   camera.updateMatrixWorld();
 
   // interior light: daylight through the window, the lamp, the candle
@@ -317,7 +343,7 @@ function frame(now) {
   room.day.intensity = e.sunI * sunVis * 0.9 * (1 - cur.rain * 0.6) + dayL * 0.4 + boltRoom * 6;
   room.day.position.set(e.sunDir.x * 3 + 0.4, Math.max(0.6, e.sunDir.y * 3) + 1.4, -3.5);
   room.skyFill.color.copy(e.hor).lerp(e.zen, 0.5);
-  room.skyFill.intensity = dayL * 2.2 + 0.05 + boltRoom * 8;
+  room.skyFill.intensity = dayL * 3.2 + 0.08 + boltRoom * 12;
   room.hemi.intensity = 0.06 + dayL * 0.35;
   scene.environmentIntensity = 0.06 + dayL * 0.35;
   lampFlick = Math.max(0, lampFlick - dt);
@@ -325,7 +351,11 @@ function frame(now) {
   if (room.lampLight) {
     room.lampLight.intensity = lampF * 1.6;
     if (room.lampFlame) room.lampFlame.material.opacity = lampF;
-    if (room.chimney) room.chimney.emissiveIntensity = lampF * 0.35;
+    if (room.chimney) {
+      const cu = room.chimney.uniforms;
+      cu.uLamp.value = lampF; cu.uFlameY.value = room.lampLight.position.y;
+      cu.uSky.value.copy(e.hor).lerp(e.zen, 0.3).multiplyScalar(0.25 + dayL * 0.9).addScalar(0.04);
+    }
   }
   let cursorBend = 0;
   if (hoverRay) { hoverRay.closestPointToPoint(flame.group.position, tmpV); const d = tmpV.sub(flame.group.position); const dist = d.length(); if (dist < 0.12) cursorBend = -Math.sign(d.x) * (1 - dist / 0.12) * 0.25; }
@@ -333,11 +363,19 @@ function frame(now) {
   if (room.candleLight) room.candleLight.intensity = flame.flicker * 0.55;
 
   steamCol.copy(e.hor).multiplyScalar(dayL * 0.9).add(warm.clone().multiplyScalar((cur.lamp * 0.35 + flame.lit * 0.15) * (0.3 + 0.7 * e.night))).addScalar(0.05);
-  steam.heat = 1 - cur.open * 0.4;
   steam.update(dt, time, hoverRay, steamCol);
 
-  if (room.props.cup) { sipT = Math.max(0, sipT - dt); const k = sipT > 0 ? Math.sin(Math.min(1, (2.2 - sipT) / 2.2) * Math.PI) : 0; room.props.cup.position.y = SILL_Y + k * 0.03; room.props.cup.rotation.x = -k * 0.15; }
-  if (room.props.tape) { tapeBump = Math.max(0, tapeBump - dt * 4); room.props.tape.position.y = SILL_Y - tapeBump * 0.003; }
+  if (teaSys) {
+    teaSys.update(dt, time, {
+      sky: tmpC.copy(e.hor).lerp(e.zen, 0.3).multiplyScalar(0.25 + dayL * 0.8),
+      warm: (cur.lamp * 0.8 + flame.lit * 0.4) * (0.3 + 0.7 * e.night),
+      lamp: room.lampLight.position, candle: flame.group.position, lampK: cur.lamp, candleK: flame.lit * 0.6,
+    });
+    const upright = teaSys.state === 'full' || teaSys.state === 'pouring' || teaSys.state === 'empty';
+    steam.origin.set(teaSys.cupHome.x, teaSys.cupHome.y + 0.012 + teaSys.fill * 0.04, teaSys.cupHome.z);
+    steam.heat = (upright ? Math.min(1, teaSys.fill * 1.3) : 0) * (1 - cur.open * 0.4);
+  }
+  if (room.deck) { tapeBump = Math.max(0, tapeBump - dt * 4); room.deck.update(dt, tape, e.night); }
   if (room.props.plant) { plantRustle = Math.max(0, plantRustle - dt * 0.8); room.props.plant.rotation.z = Math.sin(time * 14) * plantRustle * 0.04 + cur.open * Math.sin(time * 2.1) * 0.01; }
   if (room.hands && room.hands[0]) {
     const sec = (hour * 3600) % 60, min = (hour * 60) % 60;
@@ -381,7 +419,8 @@ function frame(now) {
 
   // render: outside -> blur -> room
   const moving = (cur.open > 0.005 && cur.open < 0.995) || sipT > 0 || plantRustle > 0 || tapeBump > 0;
-  const shadowDue = moving || time - lastShadow > 1 || frameCount < 3;
+  const shadowDue = moving || frameCount < 3 || shadowKick > 0;
+  shadowKick = Math.max(0, shadowKick - 1);
   if (shadowDue) lastShadow = time;
   frameCount++;
   outside.syncCamera(camera);
@@ -404,8 +443,15 @@ function frame(now) {
   if (!ready) { ready = true; document.body.classList.add('ready'); window.__ready = true; }
   requestAnimationFrame(frame);
 }
+setTimeout(() => tape.preload(), 2500);
 room.loadProps().then(() => {
+  teaSys = new Tea(scene, room.teaScene, audio);
+  teaSys.place(0.2, 0.3, -0.02, 0.29);
+  // the tea flows around everything standing on the sill
+  teaSys.addBlock(-0.74, 0.28, 0.1); teaSys.addBlock(-0.5, 0.14, 0.085); teaSys.addBlock(-0.27, 0.25, 0.05); teaSys.addBlock(0.82, 0.3, 0.05);
+  teaSys.addBlockRect(0.52, 0.2, 0.3, 0.07, -0.28);
+  room.props.cup = teaSys.cup; room.props.saucer = teaSys.saucer; room.props.pot = teaSys.pot;
   if (!state.lamp) cur.lamp = 0;
   requestAnimationFrame((t) => { last = t; frame(t); });
 });
-window.__app = { state, cur, room, drops, fog, flame, steam, camera, scene, renderer, outside, audio, tape, glassMats, actions };
+window.__app = { pick, get tea() { return teaSys; }, state, cur, room, drops, fog, flame, steam, camera, scene, renderer, outside, audio, tape, glassMats, actions };

@@ -31,18 +31,24 @@ await page.screenshot({ path: `${out}/x2_breath.png` });
 // 3. knock, blow out candle, lamp off, sip, tape
 const k = await at(0.15, 1.9, 0); await page.mouse.click(...k); await wait(1200);
 await page.screenshot({ path: `${out}/x3_knock.png` });
-await page.mouse.click(...(await at(-0.16, 0.95 + 0.17, 0.24))); await wait(300);
+const cp = await page.evaluate(() => { const v = new __app.camera.position.constructor(); __app.room.proxies[0].getWorldPosition(v); return v.toArray(); });
+await page.mouse.click(...(await at(...cp))); await wait(300);
 await page.mouse.click(...(await at(-0.74, 0.95 + 0.2, 0.28))); await wait(1600);
 await page.screenshot({ path: `${out}/x4_dark.png` });
-await page.mouse.click(...(await at(0.17, 0.95 + 0.04, 0.3))); await wait(900);
-await page.mouse.click(...(await at(0.47, 0.95 + 0.05, 0.17))); await wait(800);
-logs.push('[info] tape=' + await page.evaluate(() => __app.tape.on) + ' candle=' + await page.evaluate(() => __app.state.candle) + ' lamp=' + await page.evaluate(() => __app.state.lamp));
+
+logs.push('[info] candle=' + await page.evaluate(() => __app.state.candle) + ' lamp=' + await page.evaluate(() => __app.state.lamp));
+// sweep the cursor along the sill and time the frames
+await page.evaluate(() => { window.__ft = []; let l = performance.now(); const f = () => { const n = performance.now(); __ft.push(n - l); l = n; if (__ft.length < 400) requestAnimationFrame(f); }; requestAnimationFrame(f); });
+for (let i = 0; i < 120; i++) { await page.mouse.move(200 + i * 9, 640 + Math.sin(i * 0.2) * 40); await wait(16); }
+logs.push('[info] sweep frame ms ' + JSON.stringify(await page.evaluate(() => { const a = __ft.slice(5).sort((x, y) => x - y); return { p50: +a[a.length >> 1].toFixed(1), p95: +a[Math.floor(a.length * 0.95)].toFixed(1), worst: +a[a.length - 1].toFixed(1) }; })));
 // 4. latch
-await page.mouse.click(...(await at(0.03, 1.47, 0.04))); await wait(2500);
+const lp = await page.evaluate(() => { const v = new __app.camera.position.constructor(); __app.room.latch.children[0].getWorldPosition(v); return v.toArray(); });
+await page.mouse.click(...(await at(...lp))); await wait(2500);
 await page.screenshot({ path: `${out}/x5_open.png` });
 logs.push('[info] open=' + await page.evaluate(() => __app.state.open));
 // 5. hold the clock
-const c = await at(0.74, 0.95 + 0.07, 0.25);
+const ck = await page.evaluate(() => { const v = new __app.camera.position.constructor(); __app.room.proxies[3].getWorldPosition(v); return v.toArray(); });
+const c = await at(...ck);
 await page.mouse.move(...c); await page.mouse.down(); await wait(3000); await page.mouse.up();
 logs.push('[info] offset=' + await page.evaluate(() => __app.state.offset.toFixed(2)));
 await page.screenshot({ path: `${out}/x6_lapse.png` });

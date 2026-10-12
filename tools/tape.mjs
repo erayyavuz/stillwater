@@ -1,0 +1,33 @@
+import puppeteer from 'puppeteer-core';
+const out = process.argv[2];
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 860 });
+const logs = [];
+page.on('console', m => { if (['error', 'warning'].includes(m.type())) logs.push(`[${m.type()}] ${m.text()}`); });
+page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
+await page.goto('http://localhost:8765/?tod=2&rain=0.3&cam=0.45,1.12,0.62,0.5,1.02,0.2', { waitUntil: 'networkidle0' });
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+await wait(2500); await page.click("#enterBtn"); await wait(14000);
+const keyXY = (k) => page.evaluate((k) => { const v = new __app.camera.position.constructor(); __app.room.deck.keys[k].key.children[0].getWorldPosition(v); v.project(__app.camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, k);
+const st = () => page.evaluate(() => { const t = __app.tape; return { on: t.on, state: t.state, song: t.song, title: t.title(), pos: +t.position().toFixed(2), level: +t.level().toFixed(3), vol: +t.vol.toFixed(2), ready: t.buffers.filter(Boolean).length }; });
+const t0 = Date.now();
+await page.mouse.click(...await keyXY('play'));
+logs.push('after play ' + JSON.stringify(await st()));
+for (let i = 0; i < 20; i++) { await wait(500); const s = await st(); if (s.state === 'play' && s.level > 0) { logs.push(`playing after ${(Date.now() - t0) / 1000}s ` + JSON.stringify(s)); break; } }
+await wait(2500);
+logs.push('3s later ' + JSON.stringify(await st()));
+await page.screenshot({ path: `${out}/tape_play.png` });
+await page.mouse.click(...await keyXY('ff')); await wait(400);
+await page.screenshot({ path: `${out}/tape_ff.png` });
+logs.push('during ff ' + JSON.stringify(await st()));
+await wait(6000);
+logs.push('after ff ' + JSON.stringify(await st()));
+// volume knob via wheel
+const kv = await page.evaluate(() => { const v = new __app.camera.position.constructor(); __app.room.deck.knob.getWorldPosition(v); v.project(__app.camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; });
+await page.mouse.move(...kv); await page.mouse.wheel({ deltaY: -200 }); await wait(300);
+logs.push('vol up ' + JSON.stringify(await st()));
+await page.mouse.click(...await keyXY('stop')); await wait(600);
+logs.push('after stop ' + JSON.stringify(await st()));
+console.log(logs.join('\n'));
+await browser.close();

@@ -387,6 +387,44 @@ export class Ambience {
     g.connect(this.sfx); o.start(t + 0.15); am.start(t + 0.15); o.stop(t + 1.1); am.stop(t + 1.1);
     this._noiseHit(t + 0.1, this.pink, 'lowpass', 600, 0.7, 0.2, 0.2, 1.2); // whoosh of air
   }
+  clatter(k = 1) {
+    if (!this.ok()) return; const t0 = this.ctx.currentTime + 0.005;
+    [0, 0.11, 0.19, 0.24].forEach((dt, i) => {
+      const t = t0 + dt, a = k * [0.5, 0.25, 0.12, 0.06][i];
+      this._noiseHit(t, this.short, 'bandpass', 2500 + Math.random() * 2000, 1.5, a * 0.6, 0.001, 0.03);
+      [2350, 3920, 5610, 7200].forEach(f => { const o = this.ctx.createOscillator(); o.frequency.value = f * (0.97 + Math.random() * 0.06); this._env(o, t, a * 0.05, 0.001, 0.12 + Math.random() * 0.15).connect(this.sfx); o.start(t); o.stop(t + 0.4); });
+    });
+  }
+  splash(k = 1) {
+    if (!this.ok()) return; const t = this.ctx.currentTime + 0.02;
+    this._noiseHit(t, this.pink, 'lowpass', 1600, 0.7, 0.35 * k, 0.01, 0.35);
+    this._noiseHit(t, this.white, 'bandpass', 3500, 0.8, 0.08 * k, 0.005, 0.2);
+  }
+  gush(rate) {
+    if (!this.ok() || Math.random() > 0.7) return; const t = this.ctx.currentTime + Math.random() * 0.02;
+    const a = Math.min(0.25, 0.05 + rate * 0.12);
+    this._noiseHit(t, this.pink, 'bandpass', 380 + Math.random() * 900, 5, a, 0.004, 0.035 + Math.random() * 0.04);
+  }
+  pour(fill) {
+    if (!this.ok()) return; const t = this.ctx.currentTime + Math.random() * 0.016;
+    // a filling cup: the resonance climbs as the air column shortens
+    this._noiseHit(t, this.pink, 'bandpass', 520 + fill * 1100 + Math.random() * 80, 9, 0.16, 0.004, 0.05);
+    if (Math.random() < 0.5) this._noiseHit(t, this.white, 'highpass', 4000, 0.7, 0.02, 0.002, 0.03);
+  }
+  pourEnd() {}
+  plink(k = 0.5) {
+    if (!this.ok()) return; const t = this.ctx.currentTime + 0.005;
+    const o = this.ctx.createOscillator(); const f = 1200 + Math.random() * 1600;
+    o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.03);
+    this._env(o, t, 0.03 * k, 0.001, 0.04).connect(this.sfx); o.start(t); o.stop(t + 0.08);
+  }
+  drip(k = 0.5) {
+    if (!this.ok()) return; const t = this.ctx.currentTime + 0.005;
+    const o = this.ctx.createOscillator(); const f = 700 + Math.random() * 500;
+    o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.7, t + 0.04);
+    const lp = this._biq('lowpass', 1800, 0.7);
+    this._env(o, t, 0.035 * k, 0.001, 0.07).connect(lp).connect(this.sfx); o.start(t); o.stop(t + 0.12);
+  }
   thunder(dist = 1) {
     if (!this.ok()) return; const t = this.ctx.currentTime + 0.4 + dist * 2.5;
     const src = this.ctx.createBufferSource(); src.buffer = this.brown;

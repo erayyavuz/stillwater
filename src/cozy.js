@@ -62,18 +62,45 @@ export class CandleFlame {
     // wick ember after blowing out
     this.ember = new THREE.Mesh(new THREE.SphereGeometry(0.0022, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff5a1a, transparent: true, opacity: 0 }));
     this.group.add(this.ember);
-    // smoke wisp
-    this.smoke = [];
-    for (let i = 0; i < 40; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: WISP, color: 0xb8b2aa, transparent: true, opacity: 0, depthWrite: false }));
-      s.userData = { life: 0 };
-      this.smoke.push(s); this.group.add(s);
-    }
-    this.smokeAcc = 0; this.smokeLeft = 0;
+    // smoke: thin ribbons through a rising, curling field
+    this.MAXS = 240;
+    this.emits = [];            // {t, k}
+    this.strands = [0, 1].map(si => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.MAXS * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      g.setAttribute('aUV', new THREE.BufferAttribute(new Float32Array(this.MAXS * 2 * 2), 2).setUsage(THREE.DynamicDrawUsage));
+      g.setAttribute('aA', new THREE.BufferAttribute(new Float32Array(this.MAXS * 2), 1).setUsage(THREE.DynamicDrawUsage));
+      const idx = []; for (let i = 0; i < this.MAXS - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      g.setIndex(idx); g.setDrawRange(0, 0);
+      const m = new THREE.Mesh(g, new THREE.ShaderMaterial({
+        uniforms: { uCol: { value: new THREE.Color(0.75, 0.75, 0.78) }, uTime: { value: 0 }, uSeed: { value: si * 7.3 } },
+        vertexShader: `attribute vec2 aUV; attribute float aA; varying vec2 vUV; varying float vA; void main(){ vUV = aUV; vA = aA; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.); }`,
+        fragmentShader: `uniform vec3 uCol; uniform float uTime, uSeed; varying vec2 vUV; varying float vA;
+          float h(float x){ return fract(sin(x * 91.7 + uSeed) * 43758.5); }
+          float n1(float x){ float i = floor(x), f = fract(x); return mix(h(i), h(i + 1.), f * f * (3. - 2. * f)); }
+          void main(){
+            float across = clamp(1. - abs(vUV.x * 2. - 1.), 0., 1.);
+            float core = pow(across, 1.6);
+            // fine wisps along the stream
+            float w = 0.55 + 0.45 * n1(vUV.y * 40. - uTime * 2.) * n1(vUV.y * 13. + vUV.x * 3.);
+            float a = clamp(vA * core * w, 0., 1.);
+            if (a < 0.002) discard;
+            gl_FragColor = vec4(uCol, a);
+            #include <colorspace_fragment>
+          }`,
+        transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      m.frustumCulled = false;
+      m.renderOrder = 6;
+      return m;
+    });
+    this.smokeLeft = 0;
   }
+  attachSmoke(scene) { this.strands.forEach(m => scene.add(m)); }
+
   toggle() {
     this.target = this.target > 0.5 ? 0 : 1;
-    if (this.target === 0) this.smokeLeft = 4.5;
+    if (this.target === 0) this.smokeLeft = 5;
     return this.target;
   }
   update(dt, t, camera, draft, cursorDir) {
@@ -89,29 +116,50 @@ export class CandleFlame {
     this.flame.scale.y = 0.05 * (0.9 + 0.12 * flick) * (0.6 + 0.4 * this.lit);
     this.flame.rotation.y = Math.atan2(camera.position.x - this.group.position.x, camera.position.z - this.group.position.z);
     this.halo.material.opacity = 0.32 * this.flicker;
-    this.ember.material.opacity = this.target ? 0 : Math.max(0, this.smokeLeft / 4.5) * 0.9;
-    // smoke
-    if (this.smokeLeft > 0) {
-      this.smokeLeft -= dt;
-      this.smokeAcc += dt * 14;
-      while (this.smokeAcc > 1) {
-        this.smokeAcc -= 1;
-        const s = this.smoke.find(s => s.userData.life <= 0);
-        if (s) Object.assign(s.userData, { life: 3.2, age: 0, ph: Math.random() * 6, str: Math.min(1, this.smokeLeft / 3) });
-      }
-    }
-    for (const s of this.smoke) {
-      const u = s.userData;
-      if (u.life <= 0) { s.material.opacity = 0; continue; }
-      u.life -= dt; u.age += dt;
-      const a = u.age;
-      s.position.set(Math.sin(a * 2.2 + u.ph) * 0.012 * a + this.bend.x * 0.3 * a, 0.01 + a * 0.085, Math.cos(a * 1.7 + u.ph) * 0.008 * a);
-      s.scale.setScalar(0.008 + a * 0.03);
-      s.material.opacity = Math.sin(Math.min(1, a / 3.2) * Math.PI) * 0.22 * u.str;
-      s.material.rotation = u.ph + a * 0.4;
-    }
+    this.ember.material.opacity = this.target ? 0 : Math.max(0, this.smokeLeft / 5) * 0.9;
+    // smoke ribbons
+    if (this.smokeLeft > 0) { this.smokeLeft -= dt; this.emits.push({ t, k: Math.min(1, this.smokeLeft / 3.5) }); }
+    const LIFE = 4.5;
+    while (this.emits.length && (t - this.emits[0].t > LIFE || this.emits.length > this.MAXS)) this.emits.shift();
+    this.updateSmoke(t, camera, LIFE);
   }
 }
+
+CandleFlame.prototype.updateSmoke = function (t, camera, LIFE) {
+  const base = this.group.position;
+  const E = this.emits, n = E.length;
+  const cam = camera.position;
+  const P = new THREE.Vector3(), Q = new THREE.Vector3(), T = new THREE.Vector3(), V = new THREE.Vector3(), S = new THREE.Vector3();
+  const pt = (age, si, out) => {
+    // rises, slowly accelerating; laminar near the wick, then breaking into curls
+    const hgt = 0.004 + 0.07 * age + 0.012 * age * age;
+    const k = Math.min(1, Math.max(0, (hgt - 0.025) / 0.17)); const A = 0.0006 + 0.28 * k * k * (3 - 2 * k) * hgt;
+    const ph = si * 2.1 + Math.sin(t * 0.37 + si) * 1.4 + Math.sin(hgt * 13 + t * 0.6) * 0.8;
+    const x = A * (Math.sin(hgt * 38 - t * 2.3 + ph) * 0.7 + Math.sin(hgt * 91 - t * 4.1 + ph * 2) * 0.3) + this.bend.x * hgt * 0.4;
+    const z = A * 0.8 * Math.sin(hgt * 29 - t * 1.7 + ph + 1.3);
+    return out.set(base.x + x + si * 0.0006, base.y + hgt, base.z + z);
+  };
+  this.strands.forEach((m, si) => {
+    const g = m.geometry, pos = g.attributes.position.array, uv = g.attributes.aUV.array, al = g.attributes.aA.array;
+    m.material.uniforms.uTime.value = t;
+    let c = 0;
+    for (let i = n - 1; i >= 0; i--) {   // newest (at the wick) first
+      const e = E[i], age = t - e.t;
+      pt(age, si, P); pt(age + 0.03, si, Q);
+      T.subVectors(Q, P); if (T.lengthSq() < 1e-12) T.set(0, 1, 0); T.normalize(); V.subVectors(cam, P).normalize();
+      S.crossVectors(T, V); if (S.lengthSq() < 1e-12) S.set(1, 0, 0); S.normalize();
+      const w = 0.0007 + age * 0.0022 + age * age * 0.0008;
+      pos.set([P.x - S.x * w, P.y - S.y * w, P.z - S.z * w, P.x + S.x * w, P.y + S.y * w, P.z + S.z * w], c * 6);
+      const v = age / LIFE;
+      uv.set([0, v, 1, v], c * 4);
+      const a = e.k * Math.min(1, age * 6) * Math.pow(1 - v, 1.6) * (si ? 0.22 : 0.42) / (1 + age * 0.9);
+      al[c * 2] = al[c * 2 + 1] = a;
+      c++;
+    }
+    g.setDrawRange(0, Math.max(0, (c - 1) * 6));
+    g.attributes.position.needsUpdate = g.attributes.aUV.needsUpdate = g.attributes.aA.needsUpdate = true;
+  });
+};
 
 // Steam curling off the tea; the cursor stirs it.
 export class Steam {
