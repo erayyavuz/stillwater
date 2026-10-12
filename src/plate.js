@@ -116,17 +116,14 @@ export function createPlateMaterial(lib) {
         // foreground grass in the wind, parted by the cursor and by gusts
         float fg = smoothstep(0.55, 0.82, d) * (1. - lake);
         float gust = vnoise(vec2(q.x * 3. - t * 0.4, t * 0.13));
-        float sway = (sin(t * 1.5 + q.x * 37. + q.y * 9.) * .6 + sin(t * 2.6 + q.x * 73.) * .4) * (.35 + gust * .9) * (.55 + uWind);
+        float sway = (sin(t * 1.3 + q.x * 14. + q.y * 5.) * .7 + sin(t * 2.1 + q.x * 23.) * .3) * (.35 + gust * .8) * (.55 + uWind);
         float tip = smoothstep(0.62, 1.0, q.y);
-        q.x += sway * 0.0022 * fg * (0.4 + tip);
-        vec2 dc = (q - uCursor) * vec2(A, 1.);
-        float cd = length(dc);
-        q -= normalize(dc + 1e-5) / vec2(A, 1.) * 0.014 * exp(-cd * cd / 0.006) * fg * uCursorOn;
+        q.x += sway * 0.0009 * fg * (0.4 + tip);
         float gAge = t - uGust.z;
         if (gAge > 0. && gAge < 5.){
           vec2 gd = (q - uGust.xy) * vec2(A, 1.); float gr = length(gd);
           float gx = gr - gAge * 0.45;
-          q.x += sign(gd.x) * 0.006 * exp(-gx * gx * 40.) * exp(-gAge * 0.7) * fg;
+          q.x += sign(gd.x) * 0.0025 * exp(-gx * gx * 40.) * exp(-gAge * 0.7) * fg;
         }
 
         vec3 col;

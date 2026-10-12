@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PLATE_ASPECT as A, HORIZON, SUMMER, WINTER, WEATHER, PlateLibrary, createPlateMaterial, toGround } from './plate.js';
-import { Fire, createRain, createSnow, createFireflies, createGrass, Birds, Stone } from './overlay.js';
+import { Fire, createRain, createSnow, createFireflies, Birds, Stone } from './overlay.js';
 import { PLATE_COLORS } from './platecolors.js';
 import { Ambience } from './audio.js';
 import { initUI } from './ui.js';
@@ -56,7 +56,6 @@ const fire = new Fire(scene, U);
 const rain = createRain(mobile ? 700 : 1600, U); rain.renderOrder = 5; scene.add(rain);
 const snow = createSnow(mobile ? 450 : 900, U); snow.renderOrder = 5; scene.add(snow);
 const flies = createFireflies(40, U); flies.renderOrder = 3; scene.add(flies);
-const grass = createGrass(mobile ? 50 : 110, U); grass.renderOrder = 6; scene.add(grass);
 const birds = new Birds(scene);
 const audio = new Ambience();
 const pan = (x) => THREE.MathUtils.clamp((x - 0.5) * 2, -0.9, 0.9);
@@ -263,12 +262,6 @@ function frame(now) {
   snow.material.uniforms.uAmt.value = cur.snow;
   snow.material.uniforms.uLight.value.setRGB(...mixK(cur.tod, 'rainLight')).multiplyScalar(1.25);
   flies.material.uniforms.uAmt.value = (1 - cur.season) * ss(1.4, 2.4, cur.tod) * (1 - cur.rain);
-  const gs = mixCol(sNames, 'grassDark', f), gt = mixCol(sNames, 'grass', f);
-  // winter blades: pale straw lit like the snow around them
-  const wg = mixCol(wNames, 'grass', f), straw = wg.map((v, j) => v * [0.95, 0.88, 0.74][j]);
-  const gu = grass.material.uniforms;
-  gu.uBase.value.setRGB(...gs.map((v, j) => lerp(v * 0.6, straw[j] * 0.7, cur.season))).convertSRGBToLinear();
-  gu.uTip.value.setRGB(...gt.map((v, j) => lerp(v * 1.05, straw[j] * 1.02, cur.season))).convertSRGBToLinear();
   smokeColor.setRGB(...mixK(cur.tod, 'smoke'));
   U.cursorOn.value = P.uCursorOn.value = approach(P.uCursorOn.value, now - lastMove < 1500 ? 1 : 0, 3, dt);
 

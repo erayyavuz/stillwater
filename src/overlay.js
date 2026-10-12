@@ -50,6 +50,7 @@ export class Fire {
           void main(){
             vec2 uv = vUv; float t = uTime + uSeed;
             float v = 0.;
+            uv.y -= 0.06;
             for (int k = 0; k < 6; k++){
               float fk = float(k);
               float sd = fk * 13.7 + uSeed;
@@ -59,13 +60,14 @@ export class Fire {
               v += tongue(uv, x0, w, h, sd, t) * (.55 + .45 * (1. - abs(x0 - .5) * 2.));
             }
             // glowing bed of embers along the base
-            float bed = smoothstep(.36, .0, abs(uv.x - .5)) * smoothstep(.09, .0, uv.y) * (.6 + .4 * vnoise(vec2(uv.x * 20., t * 2.)));
+            vec2 bp = vec2((uv.x - .5) / .3, (uv.y - .1) / .07);
+            float bed = smoothstep(1., .0, length(bp)) * (.6 + .4 * vnoise(vec2(uv.x * 20., t * 2.)));
             v = min(v, 1.6);
             float heat = v * (1.25 - uv.y * 1.1);
             vec3 c = mix(vec3(.38, .04, .0), vec3(1., .26, .02), smoothstep(.0, .4, heat));
             c = mix(c, vec3(1., .58, .14), smoothstep(.4, .85, heat));
             c = mix(c, vec3(1., .86, .58), smoothstep(.95, 1.35, heat));
-            float a = smoothstep(0., .45, v);
+            float a = smoothstep(0., .45, v) * smoothstep(0.02, 0.16, uv.y);
             vec3 col = c * a + vec3(1., .35, .06) * bed * .7;
             gl_FragColor = vec4(col * uInt, 1.);
           }`,
@@ -75,7 +77,7 @@ export class Fire {
       const s = i === 0 ? 1 : 0.8;
       f.userData.s = s;
       f.scale.set(0.125 * s, 0.17 * s, 1);
-      f.position.set(i === 0 ? 0 : 0.012, -0.006, 0);
+      f.position.set(i === 0 ? 0 : 0.012, -0.018, 0);
       this.flames.push(f); this.group.add(f);
     }
 
@@ -180,7 +182,7 @@ export function createRain(count, U) {
         float len = mix(0.025, 0.11, layer);
         float wid = mix(0.0007, 0.0028, layer);
         float H = uView.w + len + 0.1;
-        float y = mod(aSeed.y * H - uTime * speed, H);
+        float y = mod(aSeed.y * H + uTime * speed, H);
         vec2 c = vec2(uView.x + aSeed.x * uView.z, uView.y - y + len);
         float slant = 0.14 + uWind * 0.12;
         c.x += (y) * slant;
@@ -208,7 +210,7 @@ export function createSnow(count, U) {
         float size = mix(0.0035, 0.03, layer);
         float speed = mix(0.025, 0.11, layer);
         float H = uView.w + size * 2.;
-        float y = mod(aSeed.y * H - uTime * speed, H);
+        float y = mod(aSeed.y * H + uTime * speed, H);
         vec2 c = vec2(uView.x + aSeed.x * uView.z, uView.y - y + size);
         c.x += sin(uTime * (0.4 + aSeed.w) + aSeed.w * 30.) * 0.02 * (0.3 + layer) - uTime * (0.006 + uWind * 0.02) * (0.5 + layer);
         c.x = uView.x + mod(c.x - uView.x, uView.z);
