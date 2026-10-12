@@ -490,4 +490,5 @@ room.loadProps().then(() => {
   if (!state.lamp) cur.lamp = 0;
   requestAnimationFrame((t) => { last = t; frame(t); });
 });
+window.__bolt = (d = 0.3) => { outside.flash = 1; boltRoom = 1; audio.thunder(d); };
 window.__app = { pick, get tea() { return teaSys; }, state, cur, room, drops, fog, flame, steam, camera, scene, renderer, outside, audio, tape, glassMats, actions };
