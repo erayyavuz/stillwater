@@ -140,12 +140,12 @@ export class Ambience {
       n.cricket += 0.35 + Math.random() * 0.5;
     }
     while (n.frog < horizon) {
-      if (summer > 0.5 && night > 0.35 && S.snowFall < 0.1) this._frog(n.frog);
+      // (frogs removed: their pulsed croak read as an alarm)
       n.frog += 2.5 + Math.random() * 7;
     }
     // a loon across the lake at dusk and at night
     while (n.loon < horizon) {
-      if (summer > 0.5 && night > 0.25) this._loon(n.loon);
+      // (loon removed: its rising wail sounded like a siren)
       n.loon += 40 + Math.random() * 70;
     }
     // owls, any season, at night
@@ -259,7 +259,7 @@ export class Ambience {
     const o = ctx.createOscillator(); o.type = 'sawtooth';
     o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(peak, t + 0.7);
     o.frequency.setValueAtTime(peak, t + dur * 0.7); o.frequency.exponentialRampToValueAtTime(f0 * 0.9, t + dur);
-    const vib = ctx.createOscillator(); vib.frequency.value = 4.5 + Math.random(); const vg = ctx.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(peak * 0.018, t + 1.2); vib.connect(vg).connect(o.frequency);
+    const vib = ctx.createOscillator(); vib.frequency.value = 2.2 + Math.random() * 0.6; const vg = ctx.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(peak * 0.006, t + 1.2); vib.connect(vg).connect(o.frequency);
     // a rounded "oo" vowel
     const f1 = this._biq('bandpass', 700, 3), f2 = this._biq('bandpass', 1100, 5);
     const lp = this._biq('lowpass', 1600, 0.5);

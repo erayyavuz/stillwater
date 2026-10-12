@@ -43,7 +43,7 @@ export class Outside {
     for (const [x, z] of [[-60, -205], [-52, -212], [38, -226], [95, -180], [-120, -150]]) lp.push(x, height(x, z) + 1.5, z);
     lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
     this.lightsMat = new THREE.PointsMaterial({ color: 0xffb46a, size: 3.5, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, fog: false, blending: THREE.AdditiveBlending });
-    s.add(new THREE.Points(lg, this.lightsMat));
+    // (distant cabin lights removed: at this distance they read as a stray orange bar)
 
     this.hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1); s.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffffff, 2);
