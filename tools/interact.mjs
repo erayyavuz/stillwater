@@ -14,13 +14,13 @@ await page.goto('http://localhost:8765/?tod=1.6', { waitUntil: 'networkidle0' })
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 await wait(4000);
 // 1. click on water -> ripple + sound starts
-await page.mouse.click(560, 520);
-await wait(150); await page.mouse.click(600, 540);
+await page.mouse.click(560, 470);
+await wait(600); await page.mouse.click(900, 430);
 await wait(900);
 await page.screenshot({ path: `${out}/i1_ripple.png` });
 logs.push('[info] audio on=' + await page.evaluate(() => __app.audio.on + ' state=' + __app.audio.ctx?.state));
 // 2. click fire
-const fireXY = await page.evaluate(() => { const v = __app.fire.hitCenter.project(__app.camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; });
+const fireXY = await page.evaluate(() => { const v = __app.view; return [(0.562 - v.x0) / v.w * innerWidth, (0.765 - v.y0) / v.h * innerHeight]; });
 await page.mouse.click(fireXY[0], fireXY[1]);
 await wait(350);
 await page.screenshot({ path: `${out}/i2_sparks.png` });

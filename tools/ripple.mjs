@@ -1,0 +1,15 @@
+import puppeteer from 'puppeteer-core';
+const out = process.argv[2], q = process.argv[3] || 'tod=0';
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 760 });
+await page.goto('http://localhost:8765/?ui=0&' + q, { waitUntil: 'networkidle0' });
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+await wait(3500);
+await page.mouse.click(600, 440); await wait(300); await page.mouse.click(760, 390);
+await wait(1500);
+await page.screenshot({ path: `${out}/r1.png`, clip: { x: 300, y: 300, width: 800, height: 300 } });
+await page.evaluate(() => __app.actions.skip());
+await wait(2600);
+await page.screenshot({ path: `${out}/r2.png` });
+await browser.close();
