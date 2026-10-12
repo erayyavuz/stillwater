@@ -1,33 +1,36 @@
 # Stillwater
 
-A quiet lake you can leave open all day. Rain on the water, a crackling fire, summer and winter, noon to night.
+A cabin window in the rain, built to be left open all day.
 
 **Live:** https://erayyavuz.github.io/stillwater/
 
-- **Move** to part the grass, **click** the water to send ripples, **tap** the fire for sparks, **scroll** to move the light from noon into night.
-- **Skip a stone** across the lake. In winter the lake is frozen and the stone slides with that singing *pew*.
-- **Sit for a minute** hides everything and guides six slow breaths.
-- **Just the lake** (or `H`) hides the controls. They also fade by themselves after a while.
+## Things to do
+- **Wipe** the misted glass by dragging across it. The view racks into focus and the mist slowly creeps back.
+- **Breathe** on the glass by holding still on it, then drag to write in the breath.
+- **Knock** on the glass and the drops shiver loose and run.
+- **Candle** – blow it out (it leaves a curl of smoke) or strike a match. Drafts and your cursor bend the flame.
+- **Oil lamp** – turn it up or down.
+- **Tea** – take a sip. Move through the steam to stir it.
+- **Tape** – plays a slow, generative electric-piano tape with wow and hiss.
+- **Latch** – opens the window, so the rain gets loud and the mist clears.
+- **Clock** – shows your real time. Hold it to let the day pass; tap it to come back to now.
+- **Scroll** – drizzle to downpour. Downpours bring lightning and thunder.
+
+The light follows your real clock (noon, golden hour, dusk, night). Winter months frost the glass and turn the rain to snow.
 
 ## How it's made
-
-The scenery is a set of ten photographic plates: noon, golden hour, dusk, night and an overcast version, each for summer and winter. All of them come from one art-directed frame relit with an image-edit model, then upscaled 2×. A depth map and a lake mask for each season drive what happens in the browser in real time:
-
-- Water: reflections distort along a ground-plane mapping, so click ripples and rain rings stay in correct perspective. There's also sparkle on the brightest reflections, and ice in winter.
-- Depth parallax that follows the cursor. Foreground grass sways in the wind and parts around the pointer.
-- Campfire light, mist drifting over the water, and twinkling stars.
-- Overlays: procedural flames, embers, smoke, rain streaks, snowflakes with depth-of-field, fireflies and birds.
-- Post-processing: bloom, grain and a vignette.
-- All sound is synthesised with WebAudio.
+- The **glass** is a custom shader:
+  - Raindrops are simulated on the CPU (they grow, merge, stick-slip down and leave trails) and splatted into a height field with MAX blending. They refract a sharp render of the outside.
+  - The condensation lives in a persistent render target that you wipe, breathe on and drops clear. It regrows over time.
+- **Outside**: a procedural lake, forest, sky, rain and mist. It's rendered to a target, blurred, and then seen through the glass.
+- **Room**: CC0 scanned props and PBR textures from [Poly Haven](https://polyhaven.com), optimised to meshopt + WebP. Real shadows come from the lamp, the candle and the daylight.
+- **Sound**: everything is synthesised with WebAudio. The outdoor sound is muffled behind the glass and opens up with the window.
 
 There's no build step. three.js 0.170 loads from a CDN import map.
 
 ## Develop
-
 ```sh
 python3 -m http.server 8765
-cd tools && npm i && ./shots.sh <outdir> 1440 760 "tod=1" "tod=3&season=winter"
+cd tools && npm i && node win.mjs <outdir>    # drives every interaction headless
 ```
-
-URL params: `tod` (0 noon to 3 night), `season` (`summer`/`winter`), `weather` (`clear`/`rain`/`snow`), `ui=0`.
-Plate generation scripts live in `tools/gen` and need `FAL_KEY` in the environment.
+URL params: `tod` (0 noon to 3 night), `rain` (0–1), `season=winter`, `open=1`, `lamp=0`, `ui=0`.

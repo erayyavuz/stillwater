@@ -1,149 +1,107 @@
-// DOM controls: season / weather / light dial, sound + mixer, breathing, idle fade.
-export function initUI(state, actions, names) {
+// Minimal chrome: an entry veil, a corner menu, hover captions, toasts and the breathing guide.
+const HINTS = {
+  glass: 'drag to wipe the glass · hold to breathe on it · tap to knock',
+  candle: 'tap to blow out — or light — the candle',
+  lamp: 'tap to turn the oil lamp up or down',
+  cup: 'tap for a sip of tea · move through the steam',
+  tape: 'tap to play the tape',
+  latch: 'tap to open the window',
+  clock: 'hold to let time pass · tap to come back to now',
+  plant: 'a small plant, glad of the rain',
+};
+
+export function initUI(actions) {
   const $ = (s) => document.querySelector(s);
-  const $$ = (s) => [...document.querySelectorAll(s)];
   const body = document.body;
+  const audio = actions.audio;
   const prefs = (() => { try { return JSON.parse(localStorage.getItem('stillwater-audio') || '{}'); } catch { return {}; } })();
   const savePrefs = () => { try { localStorage.setItem('stillwater-audio', JSON.stringify(prefs)); } catch { } };
-
-  // --- season / weather
-  const syncSeg = () => {
-    $$('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === state.season));
-    $$('[data-weather]').forEach(b => b.classList.toggle('on', b.dataset.weather === state.weather));
-  };
-  $$('[data-season]').forEach(b => b.addEventListener('click', () => { actions.setSeason(b.dataset.season); syncSeg(); }));
-  $$('[data-weather]').forEach(b => b.addEventListener('click', () => { actions.setWeather(b.dataset.weather); syncSeg(); }));
-  syncSeg();
-
-  // --- light dial (quadratic arc, x is monotonic in t)
-  const A = [14, 16], C = [120, 22], B = [226, 64];
-  const at = (t) => { const u = 1 - t; return [u * u * A[0] + 2 * u * t * C[0] + t * t * B[0], u * u * A[1] + 2 * u * t * C[1] + t * t * B[1]]; };
-  const dial = $('#dial'), knob = $('#knob'), glow = $('#knobGlow'), lname = $('#lightName');
-  function syncLight(tod) {
-    const [x, y] = at(tod / 3);
-    knob.setAttribute('cx', x); knob.setAttribute('cy', y);
-    glow.setAttribute('cx', x); glow.setAttribute('cy', y);
-    const i = Math.round(tod);
-    lname.textContent = names[i];
-    dial.setAttribute('aria-valuenow', tod.toFixed(2));
-    dial.setAttribute('aria-valuetext', names[i]);
-    $$('[data-tod]').forEach(b => b.classList.toggle('on', +b.dataset.tod === i));
-  }
-  const fromX = (clientX) => {
-    const r = dial.getBoundingClientRect();
-    const sx = ((clientX - r.left) / r.width) * 240;
-    let lo = 0, hi = 1;
-    for (let k = 0; k < 20; k++) { const m = (lo + hi) / 2; if (at(m)[0] < sx) lo = m; else hi = m; }
-    return Math.min(3, Math.max(0, lo * 3));
-  };
-  let dragging = false;
-  dial.addEventListener('pointerdown', (e) => { dragging = true; dial.setPointerCapture(e.pointerId); actions.setTod(fromX(e.clientX)); });
-  dial.addEventListener('pointermove', (e) => { if (dragging) actions.setTod(fromX(e.clientX)); });
-  dial.addEventListener('pointerup', () => { dragging = false; });
-  dial.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { actions.setTod(state.tod + 0.1); e.preventDefault(); }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { actions.setTod(state.tod - 0.1); e.preventDefault(); }
-  });
-  $$('[data-tod]').forEach(b => b.addEventListener('click', () => actions.setTod(+b.dataset.tod)));
-  syncLight(state.tod);
-
-  // --- sound
-  const audio = actions.audio;
   Object.entries(prefs.vol || {}).forEach(([k, v]) => audio.setVolume(k, v));
-  $$('[data-vol]').forEach(inp => {
-    inp.value = audio.vol[inp.dataset.vol];
-    inp.addEventListener('input', () => { audio.setVolume(inp.dataset.vol, +inp.value); prefs.vol = { ...audio.vol }; savePrefs(); });
+
+  const soundBtn = $('#soundBtn');
+  const syncSound = () => { soundBtn.classList.toggle('on', audio.on); soundBtn.querySelector('span').textContent = audio.on ? 'Sound on' : 'Sound off'; };
+  soundBtn.addEventListener('click', () => { audio.on ? (audio.stop(), prefs.muted = true) : (audio.start(), prefs.muted = false); savePrefs(); syncSound(); });
+
+  // entry veil (also the audio-unlocking gesture)
+  const veil = $('#enter');
+  let entered = false;
+  function enter() {
+    if (entered) return; entered = true;
+    veil.classList.add('gone');
+    if (!prefs.muted) audio.start();
+    syncSound();
+    setTimeout(() => toast('drag across the glass'), 2200);
+  }
+  $('#enterBtn').addEventListener('click', enter);
+  if (new URLSearchParams(location.search).get('ui') === '0') { veil.remove(); body.classList.add('bare'); entered = true; }
+
+  // menu
+  const menu = $('#menu'), menuBtn = $('#menuBtn');
+  menuBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; menuBtn.setAttribute('aria-expanded', !menu.hidden); });
+  document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !e.target.closest('.menu-wrap')) menu.hidden = true; });
+  menu.querySelectorAll('[data-vol]').forEach(inp => {
+    const k = inp.dataset.vol;
+    inp.value = k === 'tape' ? (actions.tape.vol ?? 0.55) : audio.vol[k];
+    inp.addEventListener('input', () => {
+      if (k === 'tape') actions.tape.setVolume(+inp.value); else audio.setVolume(k, +inp.value);
+      prefs.vol = { ...audio.vol }; savePrefs();
+    });
   });
-  const soundBtn = $('#soundBtn'), soundLabel = $('#soundLabel');
-  const syncSound = () => {
-    soundBtn.classList.toggle('sound-on', audio.on);
-    soundBtn.setAttribute('aria-pressed', audio.on);
-    soundLabel.textContent = audio.on ? 'Sound on' : 'Sound off';
-  };
-  soundBtn.addEventListener('click', () => {
-    if (audio.on) { audio.stop(); prefs.muted = true; } else { audio.start(); prefs.muted = false; }
-    savePrefs(); syncSound();
-  });
-  const mixer = $('#mixer'), mixBtn = $('#mixBtn');
-  mixBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    mixer.hidden = !mixer.hidden;
-    mixBtn.setAttribute('aria-expanded', !mixer.hidden);
-  });
-  document.addEventListener('pointerdown', (e) => { if (!mixer.hidden && !e.target.closest('.sound-wrap')) { mixer.hidden = true; mixBtn.setAttribute('aria-expanded', false); } });
-  // first deliberate interaction turns sound on unless the visitor muted it before
-  function maybeAutoSound() { if (!prefs.muted && !audio.on) { audio.start(); syncSound(); } }
 
-  // --- customize (mobile)
-  $('#customizeBtn').addEventListener('click', () => body.classList.toggle('panel-open'));
+  // hover caption
+  const cap = $('#caption');
+  let capT;
+  function hover(name) {
+    const text = name ? HINTS[name] : '';
+    if (cap.dataset.name === (name || '')) return;
+    cap.dataset.name = name || '';
+    clearTimeout(capT);
+    if (text) { cap.textContent = text; cap.classList.add('show'); }
+    else capT = setTimeout(() => cap.classList.remove('show'), 400);
+  }
 
-  // --- skip
-  $('#skipBtn').addEventListener('click', () => actions.skip());
+  // toast
+  const toastEl = $('#toast');
+  let toastT;
+  function toast(t) { toastEl.textContent = t; toastEl.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('show'), 1600); }
 
-  // --- just the lake
-  const showUi = $('#showUi');
-  const setBare = (on) => { body.classList.toggle('bare', on); showUi.hidden = !on; };
-  $('#hideBtn').addEventListener('click', () => setBare(true));
-  showUi.addEventListener('click', () => setBare(false));
-
-  // --- breathing
+  // breathing
   const breath = $('#breath'), core = breath.querySelector('.core'), word = $('#breathWord'), sub = $('#breathSub');
-  let bTimers = [];
-  const clearB = () => { bTimers.forEach(clearTimeout); bTimers = []; };
+  let bT = [];
+  const clear = () => { bT.forEach(clearTimeout); bT = []; };
   function startBreath() {
-    maybeAutoSound();
-    body.classList.add('breathing');
-    breath.hidden = false;
-    actions.breathe(true);
-    clearB();
-    const cycles = 6, inS = 4, outS = 6;
-    let t = 1200;
+    menu.hidden = true;
+    body.classList.add('breathing'); breath.hidden = false; actions.breathe(true); clear();
+    const cycles = 6, inS = 4, outS = 6; let t = 1200;
     word.textContent = 'Settle in'; sub.textContent = 'six slow breaths';
     core.style.transitionDuration = '1.2s'; core.style.transform = 'scale(.42)';
     for (let i = 0; i < cycles; i++) {
-      bTimers.push(setTimeout(() => {
-        word.textContent = 'Breathe in'; sub.textContent = `${cycles - i} of ${cycles}`;
-        core.style.transitionDuration = inS + 's'; core.style.transform = 'scale(1)';
-      }, t));
-      t += inS * 1000;
-      bTimers.push(setTimeout(() => {
-        word.textContent = 'Let it go';
-        core.style.transitionDuration = outS + 's'; core.style.transform = 'scale(.42)';
-      }, t));
-      t += outS * 1000;
+      bT.push(setTimeout(() => { word.textContent = 'Breathe in'; sub.textContent = `${cycles - i} of ${cycles}`; core.style.transitionDuration = inS + 's'; core.style.transform = 'scale(1)'; }, t)); t += inS * 1000;
+      bT.push(setTimeout(() => { word.textContent = 'Let it go'; core.style.transitionDuration = outS + 's'; core.style.transform = 'scale(.42)'; }, t)); t += outS * 1000;
     }
-    bTimers.push(setTimeout(() => { word.textContent = 'Welcome back'; sub.textContent = 'stay as long as you like'; }, t));
-    bTimers.push(setTimeout(endBreath, t + 3500));
+    bT.push(setTimeout(() => { word.textContent = 'Welcome back'; sub.textContent = 'stay as long as you like'; }, t));
+    bT.push(setTimeout(endBreath, t + 3500));
   }
-  function endBreath() {
-    clearB();
-    body.classList.remove('breathing');
-    breath.hidden = true;
-    actions.breathe(false);
-    poke();
-  }
+  function endBreath() { clear(); body.classList.remove('breathing'); breath.hidden = true; actions.breathe(false); }
   $('#breatheBtn').addEventListener('click', startBreath);
   $('#breathBack').addEventListener('click', endBreath);
-
-  // --- keyboard
+  $('#bareBtn').addEventListener('click', () => { menu.hidden = true; body.classList.add('bare'); toast('press H to bring the menu back'); });
   addEventListener('keydown', (e) => {
     if (e.target.matches && e.target.matches('input')) return;
-    if (e.key === 'Escape') { if (!breath.hidden) endBreath(); else setBare(false); }
-    if (e.key === 'h' || e.key === 'H') setBare(!body.classList.contains('bare'));
-    if (e.key === ' ' && e.target === document.body) { e.preventDefault(); actions.skip(); }
+    if (e.key === 'Escape' && !breath.hidden) endBreath();
+    if (e.key === 'h' || e.key === 'H') body.classList.toggle('bare');
+    if (e.key === 'b' || e.key === 'B') breath.hidden ? startBreath() : endBreath();
   });
 
-  // --- idle fade: after a while only the lake remains
+  // idle: chrome fades away
   let idleT;
-  function poke() {
-    body.classList.remove('idle');
-    clearTimeout(idleT);
-    idleT = setTimeout(() => { if (mixer.hidden) body.classList.add('idle'); }, 14000);
-  }
-  ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => addEventListener(ev, poke, { passive: true }));
+  const poke = () => { body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => { if (menu.hidden) body.classList.add('idle'); }, 9000); };
+  ['pointermove', 'pointerdown', 'keydown', 'wheel'].forEach(ev => addEventListener(ev, poke, { passive: true }));
   poke();
 
-  if (new URLSearchParams(location.search).get('ui') === '0') { setBare(true); showUi.hidden = true; }
   syncSound();
-  return { syncLight, maybeAutoSound };
+  return {
+    hover, toast,
+    firstGesture() { if (!entered) enter(); else if (!audio.on && !prefs.muted) { audio.start(); syncSound(); } },
+  };
 }

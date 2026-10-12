@@ -4,294 +4,408 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { PLATE_ASPECT as A, HORIZON, SUMMER, WINTER, WEATHER, PlateLibrary, createPlateMaterial, toGround } from './plate.js';
-import { Fire, createRain, createSnow, createFireflies, Birds, Stone } from './overlay.js';
-import { PLATE_COLORS } from './platecolors.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Outside } from './outside/world.js';
+import { Room, WIN, SILL_Y } from './room.js';
+import { Drops, Fog, createGlassMaterial } from './glass.js';
+import { CandleFlame, Steam } from './cozy.js';
 import { Ambience } from './audio.js';
+import { Tape } from './music.js';
 import { initUI } from './ui.js';
 
-export const LIGHT_NAMES = ['Noon', 'Golden', 'Dusk', 'Night'];
 const params = new URLSearchParams(location.search);
 const mobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
+const Q = mobile
+  ? { terrainSeg: 180, trees: 1400, frameTrees: 8, grass: 9000, reeds: 1800, rain: 4000, snow: 2500, smoke: 8, reflScale: 0.18, fireflies: 40, out: 0.8 }
+  : { terrainSeg: 240, trees: 2600, frameTrees: 12, grass: 24000, reeds: 4000, rain: 7000, snow: 4500, smoke: 12, reflScale: 0.22, fireflies: 70, out: 1.0 };
+const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const approach = (v, target, rate, dt) => v + (target - v) * (1 - Math.exp(-rate * dt));
 
-// ---------- state ----------
-const store = (() => { try { return JSON.parse(localStorage.getItem('stillwater') || '{}'); } catch { return {}; } })();
+// ---------- persistent state ----------
+const store = (() => { try { return JSON.parse(localStorage.getItem('stillwater2') || '{}'); } catch { return {}; } })();
 const state = {
-  tod: +(params.get('tod') ?? store.tod ?? 1),
-  season: params.get('season') ?? store.season ?? 'summer',
-  weather: params.get('weather') ?? store.weather ?? 'clear',
+  rain: +(params.get('rain') ?? store.rain ?? 0.6),
+  lamp: params.get('lamp') ? params.get('lamp') === '1' : (store.lamp ?? true),
+  candle: store.candle ?? true,
+  open: params.get('open') === '1',
+  offset: 0, // hours added to the real clock (time-lapse)
 };
-const W0 = state.season === 'winter' ? 1 : 0;
-const cur = { tod: state.tod, season: W0, rain: state.weather === 'rain' ? 1 : 0, snow: state.weather === 'snow' ? 1 : 0, ice: W0 };
-const save = () => { try { localStorage.setItem('stillwater', JSON.stringify(state)); } catch { } };
+const save = () => { try { localStorage.setItem('stillwater2', JSON.stringify({ rain: state.rain, lamp: state.lamp, candle: state.candle })); } catch { } };
+const month = new Date().getMonth();
+const winterDefault = params.get('season') ? params.get('season') === 'winter' : (month === 11 || month <= 1);
 
 // ---------- renderer ----------
 const canvas = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-let dpr = Math.min(devicePixelRatio, mobile ? 1.5 : 2);
+let dpr = Math.min(devicePixelRatio, mobile ? 1.5 : 1.6);
 renderer.setPixelRatio(dpr);
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.NoToneMapping;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // the room is mostly still: refresh shadows only when needed
 
 const scene = new THREE.Scene();
-const camera = new THREE.OrthographicCamera(0, A, 0, -1, -10, 10);
-camera.position.z = 5;
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.2;
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.02, 40);
+const camHome = new THREE.Vector3(0, 1.43, 1.5), lookHome = new THREE.Vector3(0, 1.37, 0);
 
-const U = {
-  time: { value: 0 }, wind: { value: 0.3 }, px: { value: dpr },
-  view: { value: new THREE.Vector4(0, 0, A, 1) },
-  cursorO: { value: new THREE.Vector2(-9, -9) }, cursorOn: { value: 0 },
-  gustO: { value: new THREE.Vector4(0, 0, -100, 0) },
-};
+const room = new Room(scene);
+const outside = new Outside(Q);
 
-const lib = new PlateLibrary(mobile);
-const plateMat = createPlateMaterial(lib);
-const plate = new THREE.Mesh(new THREE.PlaneGeometry(A, 1), plateMat);
-plate.position.set(A / 2, -0.5, -1);
-plate.renderOrder = -10;
-scene.add(plate);
-const P = plateMat.uniforms;
+// outside -> render target (+ a blurred copy for misted glass)
+const outRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 2 });
+const blurA = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+const blurB = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+const kawase = new FullScreenQuad(new THREE.ShaderMaterial({
+  uniforms: { tIn: { value: null }, uPx: { value: new THREE.Vector2() }, uK: { value: 1 } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
+  fragmentShader: `uniform sampler2D tIn; uniform vec2 uPx; uniform float uK; varying vec2 vUv;
+    void main(){ vec2 o = uPx * (uK + .5);
+      vec3 c = texture2D(tIn, vUv + vec2(o.x, o.y)).rgb + texture2D(tIn, vUv + vec2(-o.x, o.y)).rgb
+             + texture2D(tIn, vUv + vec2(o.x, -o.y)).rgb + texture2D(tIn, vUv + vec2(-o.x, -o.y)).rgb;
+      gl_FragColor = vec4(c * .25, 1.); }`,
+}));
+function blurOutside() {
+  const m = kawase.material;
+  let src = outRT, dst = blurA;
+  for (let i = 0; i < 4; i++) {
+    m.uniforms.tIn.value = src.texture;
+    m.uniforms.uPx.value.set(1 / dst.width, 1 / dst.height);
+    m.uniforms.uK.value = i;
+    renderer.setRenderTarget(dst); kawase.render(renderer);
+    src = dst; dst = dst === blurA ? blurB : blurA;
+  }
+  renderer.setRenderTarget(null);
+  return src;
+}
+const outTex = { sharp: outRT.texture, blur: blurB.texture };
 
-const fire = new Fire(scene, U);
-const rain = createRain(mobile ? 700 : 1600, U); rain.renderOrder = 5; scene.add(rain);
-const snow = createSnow(mobile ? 450 : 900, U); snow.renderOrder = 5; scene.add(snow);
-const flies = createFireflies(40, U); flies.renderOrder = 3; scene.add(flies);
-const birds = new Birds(scene);
-const audio = new Ambience();
-const pan = (x) => THREE.MathUtils.clamp((x - 0.5) * 2, -0.9, 0.9);
-let rippleN = 0;
-const ripple = (X, Z, s) => { rippleN = (rippleN + 1) % plateMat.ripples.length; plateMat.ripples[rippleN].set(X, Z, U.time.value, s); };
-const gx = (X, Z) => 0.5 + X / (A * Z);
-const stone = new Stone(scene, {
-  splash: (X, Z, s, sink) => { ripple(X, Z, s); audio.plop(s * (sink ? 0.9 : 0.6) / (1 + Z), pan(gx(X, Z))); },
-  ice: (X, Z, s) => audio.iceSkip((0.3 + s * 0.7) / (1 + Z * 0.5), pan(gx(X, Z))),
-  slide: (X, Z, v) => audio.scrape(Math.min(4, v * 8), pan(gx(X, Z))),
+// the outside, as the room's backdrop (seen directly through an open sash)
+const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: { tOut: { value: outRT.texture }, tBlur: { value: blurB.texture }, uRes: { value: new THREE.Vector2() }, uDef: { value: 0.3 } },
+  vertexShader: `void main(){ gl_Position = vec4(position.xy, 0.99999, 1.); }`,
+  fragmentShader: `uniform sampler2D tOut, tBlur; uniform vec2 uRes; uniform float uDef;
+    void main(){ vec2 uv = gl_FragCoord.xy / uRes; gl_FragColor = vec4(mix(texture2D(tOut, uv).rgb, texture2D(tBlur, uv).rgb, uDef), 1.); }`,
+  depthWrite: false,
+}));
+backdrop.frustumCulled = false; backdrop.renderOrder = -100;
+scene.add(backdrop);
+
+// glass
+const drops = new Drops(renderer, mobile ? 1800 : 3200);
+const fog = new Fog(renderer);
+const glassMats = room.sashes.map(s => {
+  const m = createGlassMaterial(drops, fog, outTex);
+  const r = s.glass.userData.rect;
+  m.uniforms.uRect.value.set(r.x0 - WIN.x0, r.y0 - WIN.y0, r.x1 - WIN.x0, r.y1 - WIN.y0);
+  s.glass.material = m;
+  s.glass.userData.glass = true;
+  return m;
 });
 
+// cozy bits
+const flame = new CandleFlame(new THREE.Vector3(-0.16, SILL_Y + 0.221, 0.24));
+scene.add(flame.group);
+if (!state.candle) { flame.target = 0; flame.lit = 0; }
+const steam = new Steam(new THREE.Vector3(0.17, SILL_Y + 0.07, 0.3), mobile ? 20 : 34);
+scene.add(steam.group);
+
+const audio = new Ambience();
+const tape = new Tape(audio);
+
 // ---------- post ----------
-const composer = new EffectComposer(renderer);
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: mobile || devicePixelRatio >= 2 ? 0 : 4 }));
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.32, 0.55, 0.78);
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.6, 0.9);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const finish = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uTime: U.time, uRes: { value: new THREE.Vector2() }, uGrain: { value: 0.045 } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2() } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime, uGrain; uniform vec2 uRes; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; uniform vec2 uRes; varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
-      c = c * (1.02 - 0.06 * c) + 0.008;
-      vec2 v = vUv - .5; v.x *= uRes.x / uRes.y;
-      c *= 1. - smoothstep(0.45, 1.25, length(v)) * 0.42;
-      float g = h(vUv * uRes + fract(uTime * 7.3) * 100.) - .5;
-      c += g * uGrain * (0.6 + 0.4 * (1. - dot(c, vec3(.33))));
+      vec2 v = vUv - .5;
+      vec2 ca = v * dot(v, v) * 0.006;
+      vec3 c = vec3(texture2D(tDiffuse, vUv + ca).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - ca).b);
+      v.x *= uRes.x / uRes.y;
+      c *= 1. - smoothstep(0.4, 1.2, length(v)) * 0.5;
+      c += (h(vUv * uRes + fract(uTime * 7.3) * 100.) - .5) * 0.035;
       gl_FragColor = vec4(c, 1.);
     }`,
 });
 composer.addPass(finish);
 
-// ---------- view window (cover fit + overscan + breathing zoom) ----------
-const view = { x0: 0, y0: 0, w: 1, h: 1 };
-let breathe = 0, breatheT = 0, zoomS = 1;
-function updateView() {
-  const s = innerWidth / innerHeight;
-  let w, h;
-  if (s > A) { w = 1; h = A / s; } else { h = 1; w = s / A; }
-  const ov = 1.035 * zoomS;
-  w /= ov; h /= ov;
-  const portrait = s < 0.9;
-  const fx = portrait ? 0.6 : 0.5, fy = portrait ? 0.6 : 0.52;
-  view.w = w; view.h = h;
-  view.x0 = THREE.MathUtils.clamp(fx - w / 2, 0, 1 - w);
-  view.y0 = THREE.MathUtils.clamp(fy - h / 2, 0, 1 - h);
-  camera.left = view.x0 * A; camera.right = (view.x0 + w) * A;
-  camera.top = -view.y0; camera.bottom = -(view.y0 + h);
-  camera.updateProjectionMatrix();
-  U.view.value.set(view.x0 * A, -view.y0, w * A, h);
-}
 function resize() {
-  renderer.setSize(innerWidth, innerHeight);
-  composer.setSize(innerWidth, innerHeight);
-  bloom.resolution.set(innerWidth / 2, innerHeight / 2);
-  finish.uniforms.uRes.value.set(innerWidth * dpr, innerHeight * dpr);
-  U.px.value = dpr;
-  updateView();
+  const w = innerWidth, h = innerHeight;
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(w, h);
+  composer.setPixelRatio(dpr);
+  composer.setSize(w, h);
+  camera.aspect = w / h;
+  const portrait = w / h < 0.85;
+  camera.fov = portrait ? 60 : 50;
+  // portrait: step in and favour the left pane, the candle and the tea
+  camHome.set(portrait ? -0.08 : 0, portrait ? 1.48 : 1.43, portrait ? 1.42 : 1.5);
+  lookHome.set(portrait ? -0.08 : 0, portrait ? 1.42 : 1.37, 0);
+  camera.updateProjectionMatrix();
+  const W = Math.round(w * Math.min(dpr, 1.25) * Q.out), H = Math.round(h * Math.min(dpr, 1.25) * Q.out);
+  outRT.setSize(W, H);
+  blurA.setSize(Math.max(2, W >> 2), Math.max(2, H >> 2)); blurB.setSize(Math.max(2, W >> 2), Math.max(2, H >> 2));
+  outside.water.resizeReflection && outside.water.resizeReflection(Q);
+  const res = new THREE.Vector2(w * dpr, h * dpr);
+  for (const m of glassMats) m.uniforms.uRes.value.copy(res);
+  backdrop.material.uniforms.uRes.value.copy(res);
+  finish.uniforms.uRes.value.copy(res);
+  bloom.resolution.set(w / 2, h / 2);
 }
 addEventListener('resize', resize);
 resize();
 
-const toPlate = (cx, cy) => ({ x: view.x0 + (cx / innerWidth) * view.w, y: view.y0 + (cy / innerHeight) * view.h });
-
-// ---------- lake mask on the CPU (click routing) ----------
-const maskData = {};
-(() => {
-  const img = new Image();
-  img.onload = () => {
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const x = c.getContext('2d'); x.drawImage(img, 0, 0);
-    Object.assign(maskData, { w: img.width, h: img.height, d: x.getImageData(0, 0, img.width, img.height).data });
-  };
-  img.src = 'assets/plates/mask.png';
-})();
-function isLake(x, y) {
-  if (!maskData.d) return y > HORIZON + 0.01 && y < 0.72;
-  const i = (Math.floor(y * maskData.h) * maskData.w + Math.floor(x * maskData.w)) * 4;
-  return maskData.d[i + (cur.season > 0.5 ? 1 : 0)] > 128;
+// ---------- time of day from the real clock ----------
+// light keys: 0 noon, 1 golden, 2 dusk, 3 night
+function lightFromHour(h) {
+  const k = [[0, 3], [5, 3], [6.3, 2], [7.5, 1], [10, 0], [16, 0], [18.3, 1], [19.6, 2], [21, 3], [24, 3]];
+  for (let i = 0; i < k.length - 1; i++) if (h >= k[i][0] && h <= k[i + 1][0]) {
+    const f = (h - k[i][0]) / (k[i + 1][0] - k[i][0]);
+    return k[i][1] + (k[i + 1][1] - k[i][1]) * f;
+  }
+  return 3;
 }
+const hourNow = () => { const d = new Date(); return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600; };
 
 // ---------- interaction ----------
-const mouse = new THREE.Vector2(), mouseS = new THREE.Vector2();
-let lastMove = 0, gustBoost = 0;
-let ui = null;
-function onMove(cx, cy) {
-  mouse.set((cx / innerWidth) * 2 - 1, (cy / innerHeight) * 2 - 1);
-  const p = toPlate(cx, cy);
-  P.uCursor.value.set(p.x, p.y);
-  U.cursorO.value.set(p.x * A, -p.y);
-  lastMove = performance.now();
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2(), mouse = new THREE.Vector2(), mouseS = new THREE.Vector2();
+let hoverRay = null, pointer = null;
+const pickables = () => [...room.sashes.map(s => s.glass), room.latch, ...Object.values(room.props)];
+function pick(cx, cy) {
+  ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(pickables(), true);
+  for (const h of hits) {
+    let o = h.object, name = null;
+    while (o) { if (o.userData.glass) { name = 'glass'; break; } if (o === room.latch) { name = 'latch'; break; } if (o.userData.prop) { name = o.userData.prop; break; } o = o.parent; }
+    if (!name) continue;
+    if (name === 'glass') {
+      const s = room.sashes.find(s => s.glass === h.object);
+      if (s.open > 0.3) continue; // looking through the open sash
+      const r = s.glass.userData.rect;
+      return { name, gx: r.x0 - WIN.x0 + h.uv.x * (r.x1 - r.x0), gy: r.y0 - WIN.y0 + h.uv.y * (r.y1 - r.y0), point: h.point };
+    }
+    return { name, point: h.point };
+  }
+  return null;
 }
-function onTap(cx, cy) {
-  if (!audio.on) ui.maybeAutoSound();
-  const p = toPlate(cx, cy);
-  if (fire.hit(p.x, p.y)) { fire.stoke(); audio.sparks(); return; }
-  if (isLake(p.x, p.y) && p.y > HORIZON + 0.004) {
-    if (cur.ice > 0.5) { audio.iceSkip(0.3, pan(p.x)); return; }
-    const g = toGround(p.x, p.y);
-    ripple(g.X, g.Z, 1);
-    audio.plop(0.7 / (1 + g.Z * 0.5), pan(p.x));
-  } else if (p.y > HORIZON) {
-    P.uGust.value.set(p.x, p.y, U.time.value, 1);
-    U.gustO.value.set(p.x * A, -p.y, U.time.value, 1);
-    gustBoost = 1; audio.gust();
+let focusT = 0, lapse = false;
+let camShake = 0, lampFlick = 0, sipT = 0, tapeBump = 0, plantRustle = 0, breathe = 0, breatheT = 0, boltRoom = 0;
+const BRUSH = 0.046;
+function onDown(e) {
+  ui.firstGesture();
+  const p = pick(e.clientX, e.clientY);
+  pointer = { x: e.clientX, y: e.clientY, t: performance.now(), hit: p, moved: false, last: p, breath: 0 };
+  if (p && p.name === 'clock') { lapse = true; }
+}
+function onMove(e) {
+  mouse.set((e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1);
+  ndc.set(mouse.x, -mouse.y); ray.setFromCamera(ndc, camera); hoverRay = ray.ray.clone();
+  const p = pick(e.clientX, e.clientY);
+  canvas.style.cursor = !p ? 'default' : p.name === 'glass' ? 'crosshair' : 'pointer';
+  ui.hover(p ? p.name : null);
+  if (!pointer) return;
+  if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 6) pointer.moved = true;
+  if (pointer.moved && pointer.hit && pointer.hit.name === 'glass' && p && p.name === 'glass' && pointer.last) {
+    const a = pointer.last, len = Math.hypot(p.gx - a.gx, p.gy - a.gy);
+    const steps = Math.max(1, Math.ceil(len / (BRUSH * 0.3)));
+    for (let i = 1; i <= steps; i++) fog.wipe(a.gx + (p.gx - a.gx) * i / steps, a.gy + (p.gy - a.gy) * i / steps, BRUSH, 0.92);
+    drops.wipe(a.gx, a.gy, p.gx, p.gy, BRUSH * 0.9);
+    const speed = len / Math.max(0.016, (performance.now() - (pointer.lt || pointer.t)) / 1000);
+    if (len > 0.004 && Math.random() < 0.5) audio.squeak(Math.min(2, speed * 2), (p.gx / 1.2) * 2 - 1);
+    pointer.last = p; pointer.lt = performance.now();
+    focusT = 9;
   }
 }
-canvas.addEventListener('pointermove', (e) => onMove(e.clientX, e.clientY));
-canvas.addEventListener('pointerdown', (e) => onMove(e.clientX, e.clientY));
-canvas.addEventListener('click', (e) => onTap(e.clientX, e.clientY));
+function onUp() {
+  if (!pointer) return;
+  const p = pointer, held = performance.now() - p.t;
+  if (lapse && held > 350) ui.toast('Time passed');
+  lapse = false;
+  if (!p.moved && p.hit && held < 350) {
+    const n = p.hit.name;
+    if (n === 'glass') { drops.knock(p.hit.gx, p.hit.gy, 1); audio.knock((p.hit.gx / 1.2) * 2 - 1); camShake = 0.004; }
+    else if (n === 'candle') { const on = flame.toggle(); state.candle = !!on; on ? audio.match() : audio.blow(); save(); }
+    else if (n === 'lamp') { state.lamp = !state.lamp; lampFlick = 0.4; audio.click(0.8); save(); }
+    else if (n === 'cup') { sipT = 2.2; steam.puff = 1.5; audio.sip(); }
+    else if (n === 'tape') { const on = tape.toggle(); audio.tape(on); tapeBump = 1; ui.toast(on ? 'Tape playing' : 'Tape stopped'); }
+    else if (n === 'latch') { state.open = !state.open; audio.latch(state.open); ui.toast(state.open ? 'Window open' : 'Window closed'); }
+    else if (n === 'plant') { plantRustle = 1; audio.breath(); }
+    else if (n === 'clock') { if (Math.abs(state.offset) > 0.01) { state.offset = 0; ui.toast('Back to now'); } else audio.tick(); }
+  }
+  pointer = null;
+}
+canvas.addEventListener('pointerdown', onDown);
+addEventListener('pointermove', onMove);
+addEventListener('pointerup', onUp);
 addEventListener('wheel', (e) => {
-  if (e.target.closest && e.target.closest('.panel, .mixer')) return;
-  setTod(state.tod + e.deltaY * 0.0011);
+  if (e.target.closest && e.target.closest('.menu')) return;
+  state.rain = THREE.MathUtils.clamp(state.rain - e.deltaY * 0.0008, 0, 1);
+  ui.toast(state.rain < 0.04 ? 'Clearing' : state.rain < 0.35 ? 'Drizzle' : state.rain < 0.75 ? 'Rain' : 'Downpour');
+  save();
 }, { passive: true });
 
-function setTod(v) { state.tod = THREE.MathUtils.clamp(v, 0, 3); ui && ui.syncLight(state.tod); save(); }
 const actions = {
-  setTod,
-  setSeason(s) { state.season = s; save(); preload(); },
-  setWeather(w) { state.weather = w; save(); preload(); },
-  skip() { if (!audio.on) ui.maybeAutoSound(); stone.throw(cur.ice > 0.5); },
+  audio, tape,
   breathe(on) { breathe = on ? 1 : 0; breatheT = 0; },
-  audio,
+  getState: () => state,
 };
-ui = initUI(state, actions, LIGHT_NAMES);
-
-// ---------- plate loading: what is on screen first, the rest in the background ----------
-function preload() {
-  const set = state.season === 'winter' ? WINTER : SUMMER;
-  const i = Math.min(3, Math.round(state.tod));
-  const first = [set[i], set[Math.min(3, i + 1)], set[Math.max(0, i - 1)]];
-  if (state.weather !== 'clear') first.push(WEATHER[state.season]);
-  return Promise.all(first.map(n => lib.load(n))).then(() => {
-    [...set, WEATHER[state.season]].forEach(n => lib.load(n));
-    setTimeout(() => [...SUMMER, ...WINTER, WEATHER.summer, WEATHER.winter].forEach(n => lib.load(n)), 2500);
-  });
-}
-const firstPaint = preload();
-
-// ---------- grading keyframes per light ----------
-const lerp = THREE.MathUtils.lerp;
-const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-const K = [
-  { night: 0, fireVis: 0.18, sparkle: 0.9, wtint: [1, 1, 1], mist: 0.25, rainLight: [0.75, 0.78, 0.8], smoke: [0.75, 0.75, 0.75] },
-  { night: 0, fireVis: 0.3, sparkle: 1.2, wtint: [0.95, 0.82, 0.68], mist: 0.3, rainLight: [0.8, 0.7, 0.58], smoke: [0.7, 0.62, 0.55] },
-  { night: 0.55, fireVis: 0.75, sparkle: 0.5, wtint: [0.42, 0.4, 0.5], mist: 0.38, rainLight: [0.42, 0.42, 0.5], smoke: [0.32, 0.32, 0.38] },
-  { night: 1, fireVis: 1, sparkle: 0.8, wtint: [0.13, 0.16, 0.24], mist: 0.32, rainLight: [0.22, 0.26, 0.36], smoke: [0.16, 0.18, 0.24] },
-];
-const mixK = (t, key) => {
-  const i = Math.min(2, Math.floor(Math.max(0, t))), f = ss(0, 1, t - i);
-  const a = K[i][key], b = K[i + 1][key];
-  return Array.isArray(a) ? a.map((v, j) => lerp(v, b[j], f)) : lerp(a, b, f);
-};
-const mixCol = (names, key, f) => { const a = PLATE_COLORS[names[0]][key], b = PLATE_COLORS[names[1]][key]; return a.map((v, j) => lerp(v, b[j], f)); };
+const ui = initUI(actions);
 
 // ---------- loop ----------
-const approach = (v, target, rate, dt) => v + (target - v) * (1 - Math.exp(-rate * dt));
-let last = performance.now(), time = +(params.get('t') ?? 0);
-let frameAcc = 0, frameN = 0;
-const smokeColor = new THREE.Color();
-const ready = (n) => !!lib.tex[n]?.ready;
+const cur = { tod: params.get('tod') ? +params.get('tod') : lightFromHour(hourNow()), rain: state.rain, winter: winterDefault ? 1 : 0, open: state.open ? 1 : 0, lamp: state.lamp ? 1 : 0, wet: 0.6 };
+let last = performance.now(), time = 0, nextBolt = 20, frameAcc = 0, frameN = 0;
+const warm = new THREE.Color(1, 0.6, 0.3), tmpV = new THREE.Vector3(), steamCol = new THREE.Color();
+let ready = false, lastShadow = -9, frameCount = 0;
 
 function frame(now) {
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  time += dt; U.time.value = time; P.uTime.value = time;
+  const dt = Math.min(0.1, (now - last) / 1000); last = now; time += dt;
 
-  cur.tod = approach(cur.tod, state.tod, 2.0, dt);
-  cur.season = approach(cur.season, state.season === 'winter' ? 1 : 0, 0.55, dt);
-  cur.ice = approach(cur.ice, state.season === 'winter' ? 1 : 0, 0.5, dt);
-  cur.rain = approach(cur.rain, state.weather === 'rain' ? 1 : 0, 0.5, dt);
-  cur.snow = approach(cur.snow, state.weather === 'snow' ? 1 : 0, 0.5, dt);
-  gustBoost = Math.max(0, gustBoost - dt * 0.4);
+  // time of day: the real clock, plus any time-lapse from holding the clock
+  if (lapse) { state.offset += dt * 0.9; if (Math.random() < dt * 8) audio.tick(); }
+  const hour = ((hourNow() + state.offset) % 24 + 24) % 24;
+  const todTarget = params.get('tod') ? +params.get('tod') : lightFromHour(hour);
+  cur.tod = approach(cur.tod, todTarget, lapse ? 6 : 1.5, dt);
+  // the rain breathes on its own around the chosen intensity
+  const rainAuto = THREE.MathUtils.clamp(state.rain + Math.sin(time / 170) * 0.12 + Math.sin(time / 53) * 0.06, 0, 1);
+  cur.rain = approach(cur.rain, state.rain < 0.04 ? 0 : rainAuto, 0.4, dt);
+  cur.open = approach(cur.open, state.open ? 1 : 0, 2.2, dt);
+  cur.lamp = approach(cur.lamp, state.lamp ? 1 : 0, 5, dt);
+  cur.wet = approach(cur.wet, cur.rain > 0.1 ? 1 : 0, 0.05, dt);
+  const winter = cur.winter;
+  const rainFall = cur.rain * (1 - winter), snowFall = cur.rain * winter;
 
-  // plates: adjacent light keys cross-fade quickly so in-between states stay crisp
-  const t = THREE.MathUtils.clamp(cur.tod, 0, 2.9999);
-  const i = Math.floor(t), f = ss(0.12, 0.88, t - i);
-  const fb = [SUMMER[i], SUMMER[i + 1], ...SUMMER], wb = [WINTER[i], WINTER[i + 1], ...WINTER];
-  P.tA.value = lib.get(SUMMER[i], fb); P.tB.value = lib.get(SUMMER[i + 1], fb);
-  P.tC.value = lib.get(WINTER[i], wb); P.tD.value = lib.get(WINTER[i + 1], wb);
-  P.tWs.value = lib.get(WEATHER.summer, fb); P.tWw.value = lib.get(WEATHER.winter, wb);
-  const wReady = ready(WINTER[i]) && ready(WINTER[i + 1]), sReady = ready(SUMMER[i]) && ready(SUMMER[i + 1]);
-  P.uF.value = f;
-  P.uSeason.value = !wReady ? 0 : !sReady ? 1 : cur.season;
-  const wx = Math.max(cur.rain, cur.snow);
-  P.uWx.value = ready(state.season === 'winter' ? WEATHER.winter : WEATHER.summer) ? wx * 0.92 : 0;
-  P.uWTint.value.setRGB(...mixK(cur.tod, 'wtint'));
-  const night = mixK(cur.tod, 'night');
-  P.uNight.value = night * (1 - wx * 0.7);
-  P.uRain.value = cur.rain * (1 - cur.ice);
-  P.uIce.value = cur.ice;
-  P.uWind.value = U.wind.value = 0.3 + cur.rain * 0.3 + cur.snow * 0.2 + gustBoost * 0.6 + Math.sin(time * 0.05) * 0.08;
-  P.uSparkle.value = mixK(cur.tod, 'sparkle') * (1 - wx * 0.85);
-  const sNames = [SUMMER[i], SUMMER[i + 1]], wNames = [WINTER[i], WINTER[i + 1]];
-  const mS = mixCol(sNames, 'mist', f), mW = mixCol(wNames, 'mist', f);
-  P.uMistColor.value.setRGB(...mS.map((v, j) => lerp(v, mW[j], cur.season))).convertSRGBToLinear();
-  P.uMist.value = mixK(cur.tod, 'mist') + cur.season * 0.08 + wx * 0.15;
-  P.uFireVis.value = mixK(cur.tod, 'fireVis') * (0.7 + 0.3 * (1 - wx));
+  // lightning in a downpour
+  if (rainFall > 0.78) {
+    nextBolt -= dt;
+    if (nextBolt <= 0) { outside.flash = 1; boltRoom = 1; audio.thunder(Math.random() * 1.5); nextBolt = 14 + Math.random() * 40; }
+  }
+  boltRoom = Math.max(0, boltRoom - dt * 3);
 
-  rain.material.uniforms.uAmt.value = cur.rain;
-  rain.material.uniforms.uLight.value.setRGB(...mixK(cur.tod, 'rainLight'));
-  snow.material.uniforms.uAmt.value = cur.snow;
-  snow.material.uniforms.uLight.value.setRGB(...mixK(cur.tod, 'rainLight')).multiplyScalar(1.25);
-  flies.material.uniforms.uAmt.value = (1 - cur.season) * ss(1.4, 2.4, cur.tod) * (1 - cur.rain);
-  smokeColor.setRGB(...mixK(cur.tod, 'smoke'));
-  U.cursorOn.value = P.uCursorOn.value = approach(P.uCursorOn.value, now - lastMove < 1500 ? 1 : 0, 3, dt);
+  const e = outside.update({ tod: cur.tod, todLight: cur.tod, rain: rainFall, snow: snowFall, winter, wet: cur.wet, ice: winter, time }, dt);
+  renderer.toneMappingExposure = THREE.MathUtils.lerp(1.0, 1.55, e.night);
 
-  // depth parallax with a slow idle drift; breathing zoom
-  mouseS.x = approach(mouseS.x, mouse.x, 1.4, dt);
-  mouseS.y = approach(mouseS.y, mouse.y, 1.4, dt);
-  P.uMouse.value.set(mouseS.x + Math.sin(time * 0.05) * 0.25, mouseS.y + Math.sin(time * 0.037) * 0.15);
+  for (const s of room.sashes) { s.open = cur.open; s.pivot.rotation.y = -s.side * cur.open * 1.15; }
+  room.lever.rotation.z = -cur.open * 1.4;
+
+  // camera: tiny head movement, a breath, a knock shake
+  mouseS.x = approach(mouseS.x, mouse.x, 1.6, dt); mouseS.y = approach(mouseS.y, mouse.y, 1.6, dt);
   if (breathe) breatheT += dt;
-  const z = 1 + (breathe ? ss(0, 25, breatheT) * 0.07 : 0);
-  if (Math.abs(z - zoomS) > 1e-5) { zoomS = approach(zoomS, z, 1.5, dt); updateView(); }
-  // overlay fire follows the plate's parallax at the fire's depth (~0.45)
-  fire.group.position.x = fire.base.x - P.uMouse.value.x * 0.3 * 0.011 * A;
-  fire.group.position.y = fire.base.y + P.uMouse.value.y * 0.3 * 0.006;
+  const bz = breathe ? ss(0, 22, breatheT) : 0;
+  camShake = Math.max(0, camShake - dt * 0.03);
+  camera.position.set(camHome.x + mouseS.x * 0.07 + Math.sin(time * 0.11) * 0.01, camHome.y - mouseS.y * 0.035 + Math.sin(time * 0.37) * 0.003 + bz * 0.04, camHome.z - bz * 0.55);
+  camera.position.x += (Math.random() - 0.5) * camShake; camera.position.y += (Math.random() - 0.5) * camShake;
+  camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(mouseS.x * 0.12, -mouseS.y * 0.05 + bz * 0.1, 0)));
+  camera.updateMatrixWorld();
 
-  fire.update(dt, time, { night, rain: cur.rain, wind: U.wind.value, smokeColor });
-  P.uFireInt.value = fire.inten;
-  stone.update(dt);
-  birds.update(dt, time, night < 0.3 && wx < 0.5, lerp(1, 0.6, wx));
-  audio.update({ rain: cur.rain, snowFall: cur.snow, night, winter: cur.season, tod: cur.tod, fireBoost: fire.boost, ice: cur.ice });
+  // interior light: daylight through the window, the lamp, the candle
+  const sunVis = ss(-0.1, 0.06, e.sunDir.y);
+  const dayL = (1 - e.night) * (1 - cur.rain * 0.45);
+  room.day.color.copy(e.sun).lerp(e.hor, 0.4);
+  room.day.intensity = e.sunI * sunVis * 0.9 * (1 - cur.rain * 0.6) + dayL * 0.4 + boltRoom * 6;
+  room.day.position.set(e.sunDir.x * 3 + 0.4, Math.max(0.6, e.sunDir.y * 3) + 1.4, -3.5);
+  room.skyFill.color.copy(e.hor).lerp(e.zen, 0.5);
+  room.skyFill.intensity = dayL * 2.2 + 0.05 + boltRoom * 8;
+  room.hemi.intensity = 0.06 + dayL * 0.35;
+  scene.environmentIntensity = 0.06 + dayL * 0.35;
+  lampFlick = Math.max(0, lampFlick - dt);
+  const lampF = cur.lamp * (0.97 + 0.03 * Math.sin(time * 9.7) * Math.sin(time * 3.1)) * (lampFlick > 0 ? 0.6 + 0.4 * Math.random() : 1);
+  if (room.lampLight) {
+    room.lampLight.intensity = lampF * 1.6;
+    if (room.lampFlame) room.lampFlame.material.opacity = lampF;
+    if (room.chimney) room.chimney.emissiveIntensity = lampF * 0.35;
+  }
+  let cursorBend = 0;
+  if (hoverRay) { hoverRay.closestPointToPoint(flame.group.position, tmpV); const d = tmpV.sub(flame.group.position); const dist = d.length(); if (dist < 0.12) cursorBend = -Math.sign(d.x) * (1 - dist / 0.12) * 0.25; }
+  flame.update(dt, time, camera, 0.2 + cur.open * 1.4, cursorBend);
+  if (room.candleLight) room.candleLight.intensity = flame.flicker * 0.55;
 
+  steamCol.copy(e.hor).multiplyScalar(dayL * 0.9).add(warm.clone().multiplyScalar((cur.lamp * 0.35 + flame.lit * 0.15) * (0.3 + 0.7 * e.night))).addScalar(0.05);
+  steam.heat = 1 - cur.open * 0.4;
+  steam.update(dt, time, hoverRay, steamCol);
+
+  if (room.props.cup) { sipT = Math.max(0, sipT - dt); const k = sipT > 0 ? Math.sin(Math.min(1, (2.2 - sipT) / 2.2) * Math.PI) : 0; room.props.cup.position.y = SILL_Y + k * 0.03; room.props.cup.rotation.x = -k * 0.15; }
+  if (room.props.tape) { tapeBump = Math.max(0, tapeBump - dt * 4); room.props.tape.position.y = SILL_Y - tapeBump * 0.003; }
+  if (room.props.plant) { plantRustle = Math.max(0, plantRustle - dt * 0.8); room.props.plant.rotation.z = Math.sin(time * 14) * plantRustle * 0.04 + cur.open * Math.sin(time * 2.1) * 0.01; }
+  if (room.hands && room.hands[0]) {
+    const sec = (hour * 3600) % 60, min = (hour * 60) % 60;
+    const ang = window.__handAngles || [hour % 12 / 12, min / 60, sec / 60].map(f => f * Math.PI * 2);
+    // hands turn about the dial's normal (the clock's local +z); the model rests at about 5:50:05
+    const REST = [150, 300, 30].map(d => d * Math.PI / 180);
+    room.hands.forEach((pv, i) => pv.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -(ang[i] - REST[i])));
+  }
+
+  // glass: drops, mist, focus
+  drops.update(dt, rainFall * (1 - cur.open), e.night > 0.5 ? 0.2 : 0.4);
+  const fogGrow = cur.open > 0.5 ? 0 : 0.016 + e.night * 0.012 + winter * 0.015;
+  if (cur.open > 0.3) fog.wipe(0.6, 0.58, 1.2, dt * 0.8);
+  if (pointer && pointer.hit && pointer.hit.name === 'glass' && !pointer.moved && performance.now() - pointer.t > 300) {
+    if (!pointer.breath) audio.breath();
+    pointer.breath = (pointer.breath || 0) + dt;
+    fog.breath(pointer.hit.gx, pointer.hit.gy - 0.01, 0.05 + Math.min(0.07, pointer.breath * 0.06), dt * 2.5);
+  }
+  fog.update(dt, fogGrow, 0.045, drops.clearStamps);
+  focusT = Math.max(0, focusT - dt);
+  const defocus = focusT > 0 ? 0.1 : 0.6;
+  const night = e.night;
+  const glows = glassMats[0].uniforms.uGlow.value;
+  [[flame.group.position, flame.lit * 0.22, 0.02], [room.lampLight ? room.lampLight.position : null, cur.lamp * 0.3, 0.035]].forEach(([p, k, sz], i) => {
+    if (!p) return;
+    tmpV.set(p.x, p.y, -p.z).project(camera);
+    glows[i].set(tmpV.x * 0.5 + 0.5, tmpV.y * 0.5 + 0.5, sz, k * (0.15 + 0.85 * night));
+  });
+  for (const m of glassMats) {
+    const u = m.uniforms;
+    u.uTime.value = time;
+    u.uDefocus.value = approach(u.uDefocus.value, defocus, focusT > 0 ? 3 : 0.5, dt);
+    u.uFogLevel.value = (0.8 + night * 0.12) * (1 - winter * 0.25);
+    u.uWarmAmt.value = (cur.lamp * 0.9 + flame.lit * 0.5) * (0.25 + 0.75 * night);
+    u.uSky.value.copy(e.hor).lerp(e.zen, 0.3).multiplyScalar(0.5 + dayL * 0.5).addScalar(boltRoom * 0.5);
+    u.uNight.value = night;
+    u.uFrost.value = winter * 0.85;
+    u.uGlow.value = glows;
+  }
+  backdrop.material.uniforms.uDef.value = 0.25 * (1 - cur.open * 0.6);
+
+  // render: outside -> blur -> room
+  const moving = (cur.open > 0.005 && cur.open < 0.995) || sipT > 0 || plantRustle > 0 || tapeBump > 0;
+  const shadowDue = moving || time - lastShadow > 1 || frameCount < 3;
+  if (shadowDue) lastShadow = time;
+  frameCount++;
+  outside.syncCamera(camera);
+  renderer.shadowMap.needsUpdate = false;
+  renderer.setRenderTarget(outRT);
+  renderer.render(outside.scene, outside.camera);
+  renderer.setRenderTarget(null);
+  blurOutside();
+  finish.uniforms.uTime.value = time;
+  renderer.shadowMap.needsUpdate = shadowDue;
   composer.render();
+
+  audio.update({ rain: rainFall, snowFall, night, winter, tod: cur.tod, fireBoost: 0, ice: winter, candle: flame.lit, open: cur.open });
 
   frameAcc += dt; frameN++;
   if (frameAcc > 4) {
-    if (frameAcc / frameN > 0.026 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+    if (frameAcc / frameN > 0.028 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); resize(); }
     frameAcc = 0; frameN = 0;
   }
+  if (!ready) { ready = true; document.body.classList.add('ready'); window.__ready = true; }
   requestAnimationFrame(frame);
 }
-firstPaint.then(() => {
-  requestAnimationFrame((t) => { last = t; frame(t); requestAnimationFrame(() => document.body.classList.add('ready')); window.__ready = true; });
+room.loadProps().then(() => {
+  if (!state.lamp) cur.lamp = 0;
+  requestAnimationFrame((t) => { last = t; frame(t); });
 });
-window.__app = { state, cur, P, U, camera, scene, renderer, actions, audio, fire, birds, view, lib };
+window.__app = { state, cur, room, drops, fog, flame, steam, camera, scene, renderer, outside, audio, tape, glassMats, actions };
