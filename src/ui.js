@@ -50,7 +50,9 @@ export function initUI(actions) {
   // the welcome line follows the weather and the hour
   (() => {
     const h = S.hour ?? new Date().getHours(), late = h >= 21 || h < 5;
-    const t = S.weather === 'snow' ? "It's snowing<br>on the <em>lake.</em>" : S.weather === 'clear' ? (late ? 'A quiet night<br>by the <em>lake.</em>' : 'A still day<br>by the <em>lake.</em>') : "It's raining<br>on the <em>lake.</em>";
+    const t = S.weather === 'snow' ? 'Let the snow<br>fall <em>quiet.</em>'
+      : S.weather === 'clear' ? (late ? 'Nothing to do<br>but <em>listen.</em>' : 'Stay a while.<br>The lake <em>waits.</em>')
+      : 'Let the rain<br>do the <em>talking.</em>';
     const et = $('#enterTitle'); if (et) et.innerHTML = t;
   })();
   if (new URLSearchParams(location.search).get('ui') === '0') { veil.remove(); body.classList.add('bare'); entered = true; }
