@@ -40,6 +40,12 @@ export function initUI(actions) {
     setTimeout(() => toast('drag across the glass'), 2200);
   }
   $('#enterBtn').addEventListener('click', enter);
+  // the welcome line follows the weather and the hour
+  (() => {
+    const h = S.hour ?? new Date().getHours(), late = h >= 21 || h < 5;
+    const t = S.weather === 'snow' ? "It's snowing<br>on the <em>lake.</em>" : S.weather === 'clear' ? (late ? 'A quiet night<br>by the <em>lake.</em>' : 'A still day<br>by the <em>lake.</em>') : "It's raining<br>on the <em>lake.</em>";
+    $('#enterTitle').innerHTML = t;
+  })();
   if (new URLSearchParams(location.search).get('ui') === '0') { veil.remove(); body.classList.add('bare'); entered = true; }
 
   // ---------------------------------------------------------------- weather + intensity
@@ -90,6 +96,21 @@ export function initUI(actions) {
   // more
   $('#breatheBtn').addEventListener('click', () => { openPop(null); startBreath(); });
   $('#hideBtn').addEventListener('click', () => { openPop(null); body.classList.add('bare'); toast('press H to bring the controls back'); });
+  // sleep timer
+  const sleepState = $('#sleepState');
+  const showSleep = () => {
+    const left = actions.sleepLeft();
+    $$('[data-sleep]').forEach(b => b.classList.toggle('on', left > 0 ? false : b.dataset.sleep === '0'));
+    sleepState.textContent = left > 0 ? `fading out in ${Math.ceil(left / 60)} min` : 'fade everything out, then go dark';
+  };
+  $$('[data-sleep]').forEach(b => b.addEventListener('click', () => {
+    const m = +b.dataset.sleep; actions.setSleep(m);
+    $$('[data-sleep]').forEach(x => x.classList.toggle('on', x === b));
+    toast(m ? `Sleep timer · ${m < 60 ? m + ' min' : m / 60 + (m === 60 ? ' hour' : ' hours')}` : 'Sleep timer off');
+    showSleep();
+  }));
+  $('#sleepBtn').addEventListener('click', showSleep);
+  setInterval(showSleep, 30000);
   $('#helpBtn').addEventListener('click', () => { $('#help').hidden = !$('#help').hidden; });
 
   // ---------------------------------------------------------------- tape panel

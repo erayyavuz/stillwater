@@ -19,8 +19,8 @@ import { initUI } from './ui.js';
 const params = new URLSearchParams(location.search);
 const mobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
 const Q = mobile
-  ? { terrainSeg: 180, trees: 1400, frameTrees: 8, grass: 9000, reeds: 1800, rain: 4000, snow: 2500, smoke: 8, reflScale: 0.18, fireflies: 40, out: 0.8 }
-  : { terrainSeg: 240, trees: 2600, frameTrees: 12, grass: 24000, reeds: 4000, rain: 7000, snow: 4500, smoke: 12, reflScale: 0.22, fireflies: 70, out: 1.0 };
+  ? { terrainSeg: 160, trees: 1200, frameTrees: 8, grass: 6000, reeds: 1200, rain: 3000, snow: 2000, smoke: 8, reflScale: 0.14, fireflies: 40, out: 0.45 }
+  : { terrainSeg: 200, trees: 2200, frameTrees: 12, grass: 12000, reeds: 2500, rain: 5000, snow: 3500, smoke: 12, reflScale: 0.16, fireflies: 70, out: 0.55 };
 const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const approach = (v, target, rate, dt) => v + (target - v) * (1 - Math.exp(-rate * dt));
 
@@ -211,6 +211,7 @@ function pick(cx, cy) {
   return null;
 }
 let focusT = 0, lapse = false;
+let sleepEnd = 0, sleepFade = 0, sleepSpan = 480;
 let camShake = 0, lampFlick = 0, sipT = 0, tapeBump = 0, plantRustle = 0, breathe = 0, breatheT = 0, boltRoom = 0;
 const BRUSH = 0.046;
 function onDown(e) {
@@ -294,6 +295,8 @@ const actions = {
   audio, tape,
   setWeather(w) { state.weather = w; save(); },
   setIntensity(v) { state.rain = v; save(); },
+  setSleep(min) { sleepEnd = min ? performance.now() + min * 60000 : 0; sleepSpan = Math.min(480, min * 60 * 0.5); sleepFade = 0; },
+  sleepLeft: () => sleepEnd ? Math.max(0, (sleepEnd - performance.now()) / 1000) : 0,
   setHour(h) { state.hour = h; state.offset = 0; save(); },
   tapeKey,
   breathe(on) { breathe = on ? 1 : 0; breatheT = 0; },
@@ -305,6 +308,7 @@ const ui = initUI(actions);
 const cur = { tod: params.get('tod') ? +params.get('tod') : lightFromHour(state.hour ?? hourNow()), rain: state.weather === 'rain' ? state.rain : 0, snow: state.weather === 'snow' ? state.rain : 0, winter: state.weather === 'snow' ? 1 : 0, open: state.open ? 1 : 0, lamp: state.lamp ? 1 : 0, wet: 0.6 };
 let last = performance.now(), time = 0, nextBolt = 20, frameAcc = 0, frameN = 0;
 const warm = new THREE.Color(1, 0.6, 0.3), tmpV = new THREE.Vector3(), steamCol = new THREE.Color(), tmpC = new THREE.Color();
+const sleepDimEl = document.getElementById('sleepDim');
 let ready = false, lastShadow = -9, frameCount = 0, shadowKick = 0;
 
 function frame(now) {
@@ -457,13 +461,16 @@ function frame(now) {
   renderer.shadowMap.needsUpdate = shadowDue;
   composer.render();
 
-  audio.update({ rain: rainFall, snowFall, night, winter, tod: cur.tod, fireBoost: 0, ice: winter, candle: flame.lit, open: cur.open });
+  if (sleepEnd) {
+    const left = (sleepEnd - performance.now()) / 1000;
+    sleepFade = Math.min(1, Math.max(0, 1 - left / sleepSpan));
+    if (left <= 0 && tape.on) tape.stop();
+  } else sleepFade = Math.max(0, sleepFade - dt * 0.2);
+  if (Math.abs(sleepFade - (audio.sleepK || 0)) > 0.002) audio.setSleep(sleepFade);
+  tape.setFade && tape.setFade(sleepFade);
+  sleepDimEl.style.opacity = (sleepFade * 0.93).toFixed(3);
+  audio.update({ hour, rain: rainFall, snowFall, night, winter, tod: cur.tod, fireBoost: 0, ice: winter, candle: flame.lit, open: cur.open });
 
-  frameAcc += dt; frameN++;
-  if (frameAcc > 4) {
-    if (frameAcc / frameN > 0.028 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); resize(); }
-    frameAcc = 0; frameN = 0;
-  }
   if (!ready) { ready = true; document.body.classList.add('ready'); window.__ready = true; }
   requestAnimationFrame(frame);
 }

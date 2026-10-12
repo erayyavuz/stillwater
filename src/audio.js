@@ -30,7 +30,7 @@ export class Ambience {
     this.brown = this._noise('brown', 8);
     this.short = this._noise('white', 0.5);
 
-    this.outFilter = ctx.createBiquadFilter(); this.outFilter.type = 'lowpass'; this.outFilter.frequency.value = 1100; this.outFilter.Q.value = 0.4;
+    this.outFilter = ctx.createBiquadFilter(); this.outFilter.type = 'lowpass'; this.outFilter.frequency.value = 4200; this.outFilter.Q.value = 0.4;
     this.outGain = ctx.createGain(); this.outGain.gain.value = 0.8;
     this.outFilter.connect(this.outGain).connect(this.master);
     const bus = (name, inside) => { const g = ctx.createGain(); g.gain.value = 0; g.connect(inside ? this.master : this.outFilter); this[name] = g; return g; };
@@ -61,7 +61,7 @@ export class Ambience {
     bus('paneBus', true);
 
     const now = ctx.currentTime;
-    this.next = { tick: now, drop: now, crackle: now, lap: now + 1, bird: now + 3, cricket: now + 1, loon: now + 20, owl: now + 25 };
+    this.next = { wolf: now + 40 + Math.random() * 60, frog: now + 2, chorus: now + 1, tick: now, drop: now, crackle: now, lap: now + 1, bird: now + 3, cricket: now + 1, loon: now + 20, owl: now + 25 };
     this._applyMaster();
     this.timer = setInterval(() => this._schedule(), 400);
     this._schedule();
@@ -77,10 +77,12 @@ export class Ambience {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     this.master.gain.cancelScheduledValues(t);
-    this.master.gain.setTargetAtTime(this.on ? this.vol.master : 0, t, 0.6);
+    this.master.gain.setTargetAtTime(this.on ? this.vol.master * Math.pow(1 - (this.sleepK || 0), 1.5) : 0, t, 0.6);
     if (!this.on) setTimeout(() => { if (!this.on) this.ctx.suspend(); }, 2500);
   }
 
+  /** sleep timer: 0 = normal, 1 = silent (a slow, eased fade) */
+  setSleep(k) { this.sleepK = k; if (this.ctx && this.on) this.master.gain.setTargetAtTime(this.vol.master * Math.pow(1 - k, 1.5), this.ctx.currentTime, 0.5); }
   setVolume(k, v) { this.vol[k] = v; if (k === 'master') this._applyMaster(); }
 
   // called every frame-ish with smoothed scene state
@@ -92,7 +94,7 @@ export class Ambience {
     set(this.rainBus, v.rain * S.rain * 0.55);
     set(this.fireBus, v.fire * 0.05 * (S.candle ?? 0));
     set(this.paneBus, v.rain * Math.min(1, S.rain * 1.3) * (1 - (S.open ?? 0) * 0.6) * (1 - S.winter * 0.8));
-    this.outFilter.frequency.setTargetAtTime(1100 + (S.open ?? 0) * 11000, t, 0.4);
+    this.outFilter.frequency.setTargetAtTime(4200 + (S.open ?? 0) * 9000, t, 0.4);
     this.outGain.gain.setTargetAtTime(0.75 + (S.open ?? 0) * 0.5, t, 0.4);
     set(this.waterBus, v.water * (1 - S.ice * 0.85) * 0.5);
     set(this.windBus, v.wind * (0.05 + S.winter * 0.07 + S.rain * 0.05 + S.snowFall * 0.05));
@@ -123,26 +125,41 @@ export class Ambience {
       if (S.ice < 0.5) this._lap(n.lap);
       n.lap += 2.2 + Math.random() * 4.5;
     }
-    const summer = 1 - S.winter;
-    // day birds
+    const summer = 1 - S.winter, night = S.night, h = S.hour ?? 12;
+    const wet = Math.max(S.rain, S.snowFall);
+    const dawn = h >= 4.8 && h <= 8.5 ? 1 - Math.abs(h - 6.4) / 1.9 : 0;
+    // songbirds: a dawn chorus, quieter through the day, hushed by heavy weather
     while (n.bird < horizon) {
-      if (summer > 0.5 && S.night < 0.3 && S.rain < 0.5) this._bird(n.bird);
-      n.bird += 4 + Math.random() * 11;
+      const k = (night < 0.5 ? 1 : 0) * (1 - Math.min(1, wet * 1.1)) * (summer * 0.85 + 0.15);
+      if (Math.random() < k) this._bird(n.bird, Math.random() < 0.5 ? null : Math.floor(Math.random() * 4));
+      n.bird += (dawn > 0 ? 1.2 + Math.random() * 3 : 5 + Math.random() * 12) / Math.max(0.3, 1 - wet * 0.6);
     }
-    // night crickets
+    // crickets on warm nights, frogs by the water
     while (n.cricket < horizon) {
-      if (summer > 0.5 && S.night > 0.3 && S.rain < 0.6) this._cricket(n.cricket, Math.floor(Math.random() * 3));
+      if (summer > 0.5 && night > 0.3 && S.rain < 0.6) this._cricket(n.cricket, Math.floor(Math.random() * 3));
       n.cricket += 0.35 + Math.random() * 0.5;
     }
-    // loon at dusk/night (summer)
-    while (n.loon < horizon) {
-      if (summer > 0.5 && S.night > 0.25) this._loon(n.loon);
-      n.loon += 45 + Math.random() * 70;
+    while (n.frog < horizon) {
+      if (summer > 0.5 && night > 0.35 && S.snowFall < 0.1) this._frog(n.frog);
+      n.frog += 2.5 + Math.random() * 7;
     }
-    // owl in winter nights
+    // a loon across the lake at dusk and at night
+    while (n.loon < horizon) {
+      if (summer > 0.5 && night > 0.25) this._loon(n.loon);
+      n.loon += 40 + Math.random() * 70;
+    }
+    // owls, any season, at night
     while (n.owl < horizon) {
-      if (S.winter > 0.5 && S.night > 0.5) this._owl(n.owl);
-      n.owl += 30 + Math.random() * 50;
+      if (night > 0.5 && wet < 0.8) this._owl(n.owl);
+      n.owl += 30 + Math.random() * 60;
+    }
+    // wolves, far off in the hills: rare, more in winter, sometimes a pack answers
+    while (n.wolf < horizon) {
+      if (night > 0.45 && wet < 0.85) {
+        this._wolf(n.wolf, 0.6 + Math.random() * 0.4, (Math.random() - 0.5) * 1.4);
+        if (Math.random() < 0.45 + S.winter * 0.3) { const k = 1 + Math.floor(Math.random() * 3); for (let i = 0; i < k; i++) this._wolf(n.wolf + 1.5 + i * (1.2 + Math.random() * 2), 0.35 + Math.random() * 0.4, (Math.random() - 0.5) * 1.6, 1.08 + Math.random() * 0.2); }
+      }
+      n.wolf += (S.winter > 0.5 ? 70 : 110) + Math.random() * 120;
     }
   }
 
@@ -191,24 +208,72 @@ export class Ambience {
     src.connect(f).connect(g).connect(pan).connect(this.waterBus);
     src.start(t, Math.random() * 5, d + 0.1);
   }
-  _bird(t) {
+  _bird(t, species) {
     const ctx = this.ctx;
-    const base = 2200 + Math.random() * 2400, notes = 2 + Math.floor(Math.random() * 6);
     const pan = ctx.createStereoPanner(); pan.pan.value = (Math.random() - 0.5) * 1.6; pan.connect(this.lifeBus);
-    const far = 0.03 + Math.random() * 0.05;
-    let tt = t;
-    const kind = Math.random();
-    for (let i = 0; i < notes; i++) {
+    const far = 0.035 + Math.random() * 0.05;
+    const note = (tt, f0, f1, d, a = 1, vib = 0) => {
       const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(f0, tt); o.frequency.exponentialRampToValueAtTime(f1, tt + d);
+      if (vib) { const l = ctx.createOscillator(); l.frequency.value = vib; const lg = ctx.createGain(); lg.gain.value = f0 * 0.06; l.connect(lg).connect(o.frequency); l.start(tt); l.stop(tt + d + 0.05); }
       const g = ctx.createGain(); g.gain.value = 0;
-      const d = kind < 0.5 ? 0.06 + Math.random() * 0.06 : 0.12 + Math.random() * 0.1;
-      const f0 = base * (0.85 + Math.random() * 0.3);
-      o.frequency.setValueAtTime(f0, tt);
-      o.frequency.exponentialRampToValueAtTime(f0 * (kind < 0.5 ? 1.35 : 0.7), tt + d);
-      g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(far, tt + d * 0.2); g.gain.exponentialRampToValueAtTime(0.0001, tt + d);
+      g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(far * a, tt + Math.min(0.02, d * 0.25)); g.gain.exponentialRampToValueAtTime(0.0001, tt + d);
       o.connect(g).connect(pan); o.start(tt); o.stop(tt + d + 0.05);
-      tt += d + 0.03 + Math.random() * 0.08;
+    };
+    const sp = species ?? Math.floor(Math.random() * 4);
+    let tt = t;
+    if (sp === 0) { // clear two-note whistle, "fee-bee"
+      const f = 3600 + Math.random() * 500; note(tt, f, f * 0.98, 0.32); note(tt + 0.42, f * 0.84, f * 0.8, 0.36);
+    } else if (sp === 1) { // robin-like warble: short rising and falling phrases
+      const base = 2400 + Math.random() * 600, n = 3 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < n; i++) { const up = Math.random() < 0.5; const f = base * (0.85 + Math.random() * 0.35); note(tt, f, f * (up ? 1.3 : 0.75), 0.13 + Math.random() * 0.06); tt += 0.2 + Math.random() * 0.12; }
+    } else if (sp === 2) { // wren-like trill
+      const f = 4200 + Math.random() * 800, n = 10 + Math.floor(Math.random() * 10);
+      for (let i = 0; i < n; i++) { note(tt, f, f * 1.15, 0.04, 0.7); tt += 0.055; }
+    } else { // soft, low dove-like coo
+      const f = 520 + Math.random() * 60;
+      [[0, 0.45], [0.6, 0.3], [1.0, 0.7]].forEach(([dt, d], i) => note(t + dt, f * (i === 1 ? 1.12 : 1), f * 0.92, d, 1.4));
     }
+  }
+  _frog(t) {
+    // a burst of low croaks: pulsed reedy tone
+    const ctx = this.ctx;
+    const pan = ctx.createStereoPanner(); pan.pan.value = (Math.random() - 0.5) * 1.2; pan.connect(this.lifeBus);
+    const f = 140 + Math.random() * 120, n = 2 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) {
+      const tt = t + i * (0.32 + Math.random() * 0.1);
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+      const bp = this._biq('bandpass', f * 3.2, 4);
+      const am = ctx.createOscillator(); am.frequency.value = 38 + Math.random() * 20; const amg = ctx.createGain(); amg.gain.value = 0.5;
+      const g = ctx.createGain(); g.gain.value = 0;
+      g.gain.setValueAtTime(0.0001, tt); g.gain.linearRampToValueAtTime(0.025, tt + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.22);
+      am.connect(amg).connect(g.gain);
+      o.connect(bp).connect(g).connect(pan);
+      o.start(tt); am.start(tt); o.stop(tt + 0.3); am.stop(tt + 0.3);
+    }
+  }
+  _wolf(t, a = 1, panV = 0, pitch = 1) {
+    // a long howl: rises, holds with a wavering vibrato, falls away; far off, in a big space
+    const ctx = this.ctx;
+    const dur = 3.2 + Math.random() * 2.2, f0 = (330 + Math.random() * 60) * pitch, peak = f0 * (1.55 + Math.random() * 0.2);
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(peak, t + 0.7);
+    o.frequency.setValueAtTime(peak, t + dur * 0.7); o.frequency.exponentialRampToValueAtTime(f0 * 0.9, t + dur);
+    const vib = ctx.createOscillator(); vib.frequency.value = 4.5 + Math.random(); const vg = ctx.createGain(); vg.gain.setValueAtTime(0, t); vg.gain.linearRampToValueAtTime(peak * 0.018, t + 1.2); vib.connect(vg).connect(o.frequency);
+    // a rounded "oo" vowel
+    const f1 = this._biq('bandpass', 700, 3), f2 = this._biq('bandpass', 1100, 5);
+    const lp = this._biq('lowpass', 1600, 0.5);
+    const g = ctx.createGain(); g.gain.value = 0;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.05 * a, t + 0.5); g.gain.setValueAtTime(0.05 * a, t + dur * 0.75); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const mix = ctx.createGain(); mix.gain.value = 1;
+    o.connect(f1).connect(mix); o.connect(f2).connect(mix);
+    // breath
+    const n = ctx.createBufferSource(); n.buffer = this.pink; const nb = this._biq('bandpass', 900, 1.5); const ng = ctx.createGain(); ng.gain.value = 0.25;
+    n.connect(nb).connect(ng).connect(mix);
+    const p = ctx.createStereoPanner(); p.pan.value = panV;
+    mix.connect(lp).connect(g).connect(p); p.connect(this.lifeBus); p.connect(this.verbIn);
+    o.start(t); vib.start(t); n.start(t, Math.random() * 3, dur + 0.1);
+    o.stop(t + dur + 0.1); vib.stop(t + dur + 0.1);
   }
   _cricket(t, voice) {
     const ctx = this.ctx;

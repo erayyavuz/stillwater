@@ -186,6 +186,8 @@ export async function renderSong(i) {
   const human = () => (R() - 0.5) * 0.014;
   const L = S.chords.length;
   for (let n = 0; n < S.bars; n++) {
+    // building thousands of nodes at once blocks the page; let a frame through every couple of bars
+    if (n % 2 === 1) await new Promise(r => setTimeout(r, 0));
     const c = S.chords[n % L];
     const split = Array.isArray(c[0]);
     const parts = split ? [[c[0][0], c[1][0], 0, S.beats / 2], [c[0][1], c[1][1], S.beats / 2, S.beats / 2]] : [[c[0], c[1], 0, S.beats]];

@@ -64,9 +64,10 @@ export class Tape {
     this.rendering[i] = renderSong(i).then(b => { this.buffers[i] = b; return b; });
     return this.rendering[i];
   }
+  setFade(k) { if (Math.abs((this.fadeK || 0) - k) < 0.002) return; this.fadeK = k; if (this.out) this.out.gain.setTargetAtTime(this.vol * this.vol * 1.4 * (1 - k), this.audio.ctx.currentTime, 0.5); }
   setVolume(v) {
     this.vol = Math.max(0, Math.min(1, v));
-    if (this.out) this.out.gain.setTargetAtTime(this.vol * this.vol * 1.4, this.audio.ctx.currentTime, 0.08);
+    if (this.out) this.out.gain.setTargetAtTime(this.vol * this.vol * 1.4 * (1 - (this.fadeK || 0)), this.audio.ctx.currentTime, 0.08);
   }
   title() { return `Side A · ${this.song + 1} — ${this.titles[this.song]}`; }
   level() {

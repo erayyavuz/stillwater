@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=11">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -29,10 +29,10 @@
 
 <section class="enter" id="enter">
   <p class="eyebrow">stillwater</p>
-  <h1>It's raining<br>on the <em>lake.</em></h1>
-  <p class="lede">Come in, sit by the window. Wipe the glass, light the candle, stay as long as you like.</p>
+  <h1 id="enterTitle">It's raining<br>on the <em>lake.</em></h1>
+  <p class="lede">A cabin window to fall asleep by. Rain on the glass, a candle, an old tape, the lake outside. Leave it on as long as you like.</p>
   <button class="btn" id="enterBtn">Come inside</button>
-  <p class="small">best with sound</p>
+  <p class="small">best with headphones · there's a sleep timer under ⋯</p>
 </section>
 
 <header class="chrome">
@@ -78,6 +78,8 @@
 
 <div class="pop" id="popMore" hidden>
   <button class="item" id="breatheBtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/></svg>Sit for a minute<small>six slow breaths</small></button>
+  <button class="item" id="sleepBtn"><svg viewBox="0 0 24 24"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg>Sleep timer<small id="sleepState">fade everything out, then go dark</small></button>
+  <div class="sleepchips" id="sleepChips"><button data-sleep="15">15 min</button><button data-sleep="30">30 min</button><button data-sleep="60">1 hour</button><button data-sleep="90">1.5 hours</button><button data-sleep="0">Off</button></div>
   <button class="item" id="hideBtn"><svg viewBox="0 0 24 24"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><path d="M4 20 20 4"/></svg>Hide the controls<small>press H to bring them back</small></button>
   <button class="item" id="helpBtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.9-1.1 1.7v.4M12 16.8v.2"/></svg>Things to do</button>
   <ul class="todo" id="help" hidden>
@@ -107,6 +109,7 @@
   </div>
 </div>
 
+<div class="sleepdim" id="sleepDim"></div>
 <p class="caption" id="caption"></p>
 <p class="toast" id="toast" aria-live="polite"></p>
 
@@ -118,6 +121,6 @@
 </div>
 
 <noscript><p class="nojs">Stillwater needs JavaScript and WebGL.</p></noscript>
-<script type="module" src="src/main.js?v=10"></script>
+<script type="module" src="src/main.js?v=11"></script>
 </body>
 </html>
