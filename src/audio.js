@@ -6,7 +6,7 @@ export class Ambience {
   constructor() {
     this.ctx = null;
     this.on = false;
-    this.vol = { master: 0.8, rain: 0.8, fire: 0.7, water: 0.7, wind: 0.5, life: 0.6 };
+    this.vol = { master: 0.8, rain: 0.8, fire: 0.7, water: 0.7, wind: 0.3, life: 0.6 };
     this.scene = { rain: 0, snowFall: 0, night: 0, winter: 0, tod: 1, fireBoost: 0, ice: 0 };
     this.next = {};
   }
@@ -87,7 +87,7 @@ export class Ambience {
     set(this.rainBus, v.rain * S.rain * 0.55);
     set(this.fireBus, v.fire * (0.22 + S.fireBoost * 0.25));
     set(this.waterBus, v.water * (1 - S.ice * 0.85) * 0.5);
-    set(this.windBus, v.wind * (0.12 + S.winter * 0.18 + S.rain * 0.12 + S.snowFall * 0.12));
+    set(this.windBus, v.wind * (0.05 + S.winter * 0.07 + S.rain * 0.05 + S.snowFall * 0.05));
     set(this.lifeBus, v.life);
   }
 
