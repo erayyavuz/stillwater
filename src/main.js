@@ -26,13 +26,15 @@ const approach = (v, target, rate, dt) => v + (target - v) * (1 - Math.exp(-rate
 // ---------- persistent state ----------
 const store = (() => { try { return JSON.parse(localStorage.getItem('stillwater2') || '{}'); } catch { return {}; } })();
 const state = {
-  rain: +(params.get('rain') ?? store.rain ?? 0.6),
+  rain: +(params.get('rain') ?? store.rain ?? 0.6),           // intensity of whatever is falling
+  weather: params.get('weather') ?? (params.get('season') === 'winter' ? 'snow' : store.weather ?? 'rain'),
+  hour: store.hour ?? null,                                      // null = follow the real clock
   lamp: params.get('lamp') ? params.get('lamp') === '1' : (store.lamp ?? true),
   candle: store.candle ?? true,
   open: params.get('open') === '1',
   offset: 0, // hours added to the real clock (time-lapse)
 };
-const save = () => { try { localStorage.setItem('stillwater2', JSON.stringify({ rain: state.rain, lamp: state.lamp, candle: state.candle })); } catch { } };
+const save = () => { try { localStorage.setItem('stillwater2', JSON.stringify({ rain: state.rain, weather: state.weather, hour: state.hour, lamp: state.lamp, candle: state.candle })); } catch { } };
 const month = new Date().getMonth();
 const winterDefault = params.get('season') ? params.get('season') === 'winter' : (month === 11 || month <= 1);
 
@@ -121,9 +123,9 @@ const audio = new Ambience();
 const tape = new Tape(audio);
 
 // ---------- post ----------
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: mobile || devicePixelRatio >= 2 ? 0 : 4 }));
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: mobile ? 2 : 4 }));
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.6, 0.9);
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.38, 0.55, 1.35);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const finish = new ShaderPass({
@@ -137,7 +139,7 @@ const finish = new ShaderPass({
       vec3 c = vec3(texture2D(tDiffuse, vUv + ca).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - ca).b);
       v.x *= uRes.x / uRes.y;
       c *= 1. - smoothstep(0.4, 1.2, length(v)) * 0.5;
-      c += (h(vUv * uRes + fract(uTime * 7.3) * 100.) - .5) * 0.035;
+      c += (h(vUv * uRes + fract(uTime * 7.3) * 100.) - .5) * 0.018;
       gl_FragColor = vec4(c, 1.);
     }`,
 });
@@ -264,8 +266,9 @@ addEventListener('wheel', (e) => {
   if (e.target.closest && e.target.closest('.menu')) return;
   const hp = pick(e.clientX, e.clientY);
   if (hp && hp.name === 'tape') { tape.setVolume(tape.vol - e.deltaY * 0.0015); ui.toast('Volume ' + Math.round(tape.vol * 10)); return; }
-  state.rain = THREE.MathUtils.clamp(state.rain - e.deltaY * 0.0008, 0, 1);
-  ui.toast(state.rain < 0.04 ? 'Clearing' : state.rain < 0.35 ? 'Drizzle' : state.rain < 0.75 ? 'Rain' : 'Downpour');
+  if (state.weather === 'clear') return;
+  state.rain = THREE.MathUtils.clamp(state.rain - e.deltaY * 0.0008, 0.05, 1);
+  ui.sync(); ui.toast(ui.intensityName());
   save();
 }, { passive: true });
 
@@ -285,13 +288,17 @@ tape.onSong = (t) => ui.toast(t);
 tape.onWait = () => ui.toast('Rewinding…');
 const actions = {
   audio, tape,
+  setWeather(w) { state.weather = w; save(); },
+  setIntensity(v) { state.rain = v; save(); },
+  setHour(h) { state.hour = h; state.offset = 0; save(); },
+  tapeKey,
   breathe(on) { breathe = on ? 1 : 0; breatheT = 0; },
   getState: () => state,
 };
 const ui = initUI(actions);
 
 // ---------- loop ----------
-const cur = { tod: params.get('tod') ? +params.get('tod') : lightFromHour(hourNow()), rain: state.rain, winter: winterDefault ? 1 : 0, open: state.open ? 1 : 0, lamp: state.lamp ? 1 : 0, wet: 0.6 };
+const cur = { tod: params.get('tod') ? +params.get('tod') : lightFromHour(state.hour ?? hourNow()), rain: state.weather === 'rain' ? state.rain : 0, snow: state.weather === 'snow' ? state.rain : 0, winter: state.weather === 'snow' ? 1 : 0, open: state.open ? 1 : 0, lamp: state.lamp ? 1 : 0, wet: 0.6 };
 let last = performance.now(), time = 0, nextBolt = 20, frameAcc = 0, frameN = 0;
 const warm = new THREE.Color(1, 0.6, 0.3), tmpV = new THREE.Vector3(), steamCol = new THREE.Color(), tmpC = new THREE.Color();
 let ready = false, lastShadow = -9, frameCount = 0, shadowKick = 0;
@@ -301,12 +308,15 @@ function frame(now) {
 
   // time of day: the real clock, plus any time-lapse from holding the clock
   if (lapse) { state.offset += dt * 0.9; if (Math.random() < dt * 8) audio.tick(); }
-  const hour = ((hourNow() + state.offset) % 24 + 24) % 24;
+  const hour = (((state.hour ?? hourNow()) + state.offset) % 24 + 24) % 24;
   const todTarget = params.get('tod') ? +params.get('tod') : lightFromHour(hour);
   cur.tod = approach(cur.tod, todTarget, lapse ? 6 : 1.5, dt);
   // the rain breathes on its own around the chosen intensity
-  const rainAuto = THREE.MathUtils.clamp(state.rain + Math.sin(time / 170) * 0.12 + Math.sin(time / 53) * 0.06, 0, 1);
-  cur.rain = approach(cur.rain, state.rain < 0.04 ? 0 : rainAuto, 0.4, dt);
+  const amt = THREE.MathUtils.clamp(state.rain + Math.sin(time / 170) * 0.08 + Math.sin(time / 53) * 0.04, 0.03, 1);
+  cur.rain = approach(cur.rain, state.weather === 'rain' ? amt : 0, 0.5, dt);
+  cur.snow = approach(cur.snow, state.weather === 'snow' ? amt : 0, 0.5, dt);
+  // snow settles slowly; a thaw is slower still
+  cur.winter = approach(cur.winter, state.weather === 'snow' ? 1 : 0, state.weather === 'snow' ? 0.12 : 0.06, dt);
   const wasOpen = cur.open;
   // closing accelerates into the frame; opening eases out
   if (state.open) cur.open = approach(cur.open, 1, 2.2, dt);
@@ -315,7 +325,7 @@ function frame(now) {
   cur.lamp = approach(cur.lamp, state.lamp ? 1 : 0, 5, dt);
   cur.wet = approach(cur.wet, cur.rain > 0.1 ? 1 : 0, 0.05, dt);
   const winter = cur.winter;
-  const rainFall = cur.rain * (1 - winter), snowFall = cur.rain * winter;
+  const rainFall = cur.rain, snowFall = cur.snow;
 
   // lightning in a downpour
   if (rainFall > 0.78) {
@@ -335,17 +345,18 @@ function frame(now) {
   if (breathe) breatheT += dt;
   const bz = breathe ? ss(0, 22, breatheT) : 0;
   camShake = Math.max(0, camShake - dt * 0.03);
-  camera.position.set(camHome.x + mouseS.x * 0.07 + Math.sin(time * 0.11) * 0.01, camHome.y - mouseS.y * 0.035 + Math.sin(time * 0.37) * 0.003 + bz * 0.04, camHome.z - bz * 0.55);
-  camera.position.x += (Math.random() - 0.5) * camShake; camera.position.y += (Math.random() - 0.5) * camShake;
-  camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(mouseS.x * 0.12, -mouseS.y * 0.05 + bz * 0.1, 0)));
+  if (Math.abs(mouseS.x - mouse.x) < 1e-4) mouseS.x = mouse.x; if (Math.abs(mouseS.y - mouse.y) < 1e-4) mouseS.y = mouse.y;
+  camera.position.set(camHome.x + mouseS.x * 0.05, camHome.y - mouseS.y * 0.025 + bz * 0.04, camHome.z - bz * 0.55);
+  if (camShake > 1e-4) { camera.position.x += (Math.random() - 0.5) * camShake; camera.position.y += (Math.random() - 0.5) * camShake; }
+  camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(mouseS.x * 0.09, -mouseS.y * 0.04 + bz * 0.1, 0)));
   if (params.get('cam')) { const c = params.get('cam').split(',').map(Number); camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); }
   camera.updateMatrixWorld();
 
   // interior light: daylight through the window, the lamp, the candle
   const sunVis = ss(-0.1, 0.06, e.sunDir.y);
-  const dayL = (1 - e.night) * (1 - cur.rain * 0.45);
+  const dayL = (1 - e.night) * (1 - Math.max(cur.rain, cur.snow * 0.7) * 0.45);
   room.day.color.copy(e.sun).lerp(e.hor, 0.4);
-  room.day.intensity = e.sunI * sunVis * 0.9 * (1 - cur.rain * 0.6) + dayL * 0.4 + boltRoom * 6;
+  room.day.intensity = e.sunI * sunVis * 0.9 * (1 - Math.max(cur.rain, cur.snow * 0.8) * 0.6) + dayL * 0.4 + boltRoom * 6;
   room.day.position.set(e.sunDir.x * 3 + 0.4, Math.max(0.6, e.sunDir.y * 3) + 1.4, -3.5);
   room.skyFill.color.copy(e.hor).lerp(e.zen, 0.5);
   room.skyFill.intensity = dayL * 3.2 + 0.08 + boltRoom * 12;
@@ -380,7 +391,11 @@ function frame(now) {
     steam.origin.set(teaSys.cupHome.x, teaSys.cupHome.y + 0.012 + teaSys.fill * 0.04, teaSys.cupHome.z);
     steam.heat = (upright ? Math.min(1, teaSys.fill * 1.3) : 0) * (1 - cur.open * 0.4);
   }
-  if (room.deck) { tapeBump = Math.max(0, tapeBump - dt * 4); room.deck.update(dt, tape, e.night); }
+  if (room.deck) {
+    tapeBump = Math.max(0, tapeBump - dt * 4); room.deck.update(dt, tape, e.night);
+    room.deck.root.getWorldPosition(tmpV); tmpV.y += 0.2; tmpV.project(camera);
+    ui.placeTape((tmpV.x + 1) / 2 * innerWidth, (1 - tmpV.y) / 2 * innerHeight);
+  }
   if (room.props.plant) { plantRustle = Math.max(0, plantRustle - dt * 0.8); room.props.plant.rotation.z = Math.sin(time * 14) * plantRustle * 0.04 + cur.open * Math.sin(time * 2.1) * 0.01; }
   if (room.hands && room.hands[0]) {
     const sec = (hour * 3600) % 60, min = (hour * 60) % 60;
@@ -391,7 +406,7 @@ function frame(now) {
   }
 
   // glass: drops, mist, focus
-  drops.update(dt, rainFall * (1 - cur.open), e.night > 0.5 ? 0.2 : 0.4);
+  drops.update(dt, (rainFall + snowFall * 0.12) * (1 - cur.open), e.night > 0.5 ? 0.2 : 0.4);
   const fogGrow = cur.open > 0.5 ? 0 : 0.016 + e.night * 0.012 + winter * 0.015;
   if (cur.open > 0.3) fog.wipe(0.6, 0.58, 1.2, dt * 0.8);
   if (pointer && pointer.hit && pointer.hit.name === 'glass' && !pointer.moved && performance.now() - pointer.t > 300) {

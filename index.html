@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=9">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -37,34 +37,75 @@
 
 <header class="chrome">
   <span class="brand">stillwater</span>
-  <div class="menu-wrap">
-    <button class="pill" id="soundBtn"><i class="dot"></i><span>Sound off</span></button>
-    <button class="pill" id="menuBtn" aria-expanded="false" aria-label="Menu">•••</button>
-    <div class="menu" id="menu" hidden>
-      <p class="mtitle">Things to do</p>
-      <ul class="todo">
-        <li><b>Wipe</b> the misted glass — drag across it</li>
-        <li><b>Breathe</b> on it — hold still, then write</li>
-        <li><b>Knock</b> on the glass and watch the drops run</li>
-        <li><b>Candle</b>, <b>lamp</b>, <b>tea</b>, <b>tape</b> — tap them</li>
-        <li><b>Latch</b> — open the window to the rain</li>
-        <li><b>Clock</b> — hold it to let the day pass</li>
-        <li><b>Scroll</b> — from drizzle to downpour</li>
-      </ul>
-      <p class="mtitle">Mix</p>
-      <label><span>Rain</span><input type="range" min="0" max="1" step="0.01" data-vol="rain"></label>
-      <label><span>Lake</span><input type="range" min="0" max="1" step="0.01" data-vol="water"></label>
-      <label><span>Wind</span><input type="range" min="0" max="1" step="0.01" data-vol="wind"></label>
-      <label><span>Birds</span><input type="range" min="0" max="1" step="0.01" data-vol="life"></label>
-      <label><span>Tape</span><input type="range" min="0" max="1" step="0.01" data-vol="tape"></label>
-      <label class="master"><span>Volume</span><input type="range" min="0" max="1" step="0.01" data-vol="master"></label>
-      <div class="mrow">
-        <button class="pill" id="breatheBtn">Sit for a minute</button>
-        <button class="pill" id="bareBtn">Hide this</button>
-      </div>
-    </div>
-  </div>
 </header>
+
+<!-- bottom control bar -->
+<nav class="bar chrome" aria-label="Controls">
+  <div class="seg" role="group" aria-label="Weather">
+    <button data-weather="clear" title="Clear"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg><span>Clear</span></button>
+    <button data-weather="rain" title="Rain"><svg viewBox="0 0 24 24"><path d="M7 14h10.2a3.8 3.8 0 0 0 .3-7.6A5.4 5.4 0 0 0 7.1 7.6 3.2 3.2 0 0 0 7 14z"/><path d="M8.5 17l-1 3M12.5 17l-1 3M16.5 17l-1 3"/></svg><span>Rain</span></button>
+    <button data-weather="snow" title="Snow"><svg viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.6 4.6 12 6.8l2.4-2.2M9.6 19.4 12 17.2l2.4 2.2"/></svg><span>Snow</span></button>
+  </div>
+  <label class="inten" id="intenWrap">
+    <span class="lbl" id="intenLabel">Steady rain</span>
+    <input type="range" id="intensity" min="0.05" max="1" step="0.01" aria-label="Intensity">
+  </label>
+  <span class="sep"></span>
+  <button class="chip" data-pop="time" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span id="timeLabel">Live</span></button>
+  <button class="chip icon" id="tapeChip" aria-label="Tape" aria-expanded="false"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8.5" cy="12" r="2"/><circle cx="15.5" cy="12" r="2"/><path d="M8.5 14h7"/></svg></button>
+  <button class="chip icon" data-pop="sound" aria-expanded="false" aria-label="Sound"><svg id="soundIcon" viewBox="0 0 24 24"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path class="w" d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11"/><path class="x" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+  <button class="chip icon" data-pop="more" aria-expanded="false" aria-label="More"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/></svg></button>
+</nav>
+
+<div class="pop" id="popTime" hidden>
+  <p class="ptitle">Light</p>
+  <button class="toggle" id="liveToggle"><i></i><span>Following your clock</span></button>
+  <div class="hourrow">
+    <input type="range" id="hour" min="0" max="23.99" step="0.05" aria-label="Time of day">
+    <div class="ticks"><button data-hour="6">Dawn</button><button data-hour="12">Noon</button><button data-hour="18">Golden</button><button data-hour="20.2">Dusk</button><button data-hour="23">Night</button></div>
+  </div>
+  <p class="pnote" id="hourName"></p>
+</div>
+
+<div class="pop" id="popSound" hidden>
+  <p class="ptitle">Sound</p>
+  <button class="toggle" id="mute"><i></i><span>Sound on</span></button>
+  <label class="vrow"><span>Volume</span><input type="range" min="0" max="1" step="0.01" data-vol="master"></label>
+  <label class="vrow"><span>Rain &amp; snow</span><input type="range" min="0" max="1" step="0.01" data-vol="rain"></label>
+  <label class="vrow"><span>Lake &amp; birds</span><input type="range" min="0" max="1" step="0.01" data-vol="outside"></label>
+  <label class="vrow"><span>Tape</span><input type="range" min="0" max="1" step="0.01" data-vol="tape"></label>
+</div>
+
+<div class="pop" id="popMore" hidden>
+  <button class="item" id="breatheBtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/></svg>Sit for a minute<small>six slow breaths</small></button>
+  <button class="item" id="hideBtn"><svg viewBox="0 0 24 24"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><path d="M4 20 20 4"/></svg>Hide the controls<small>press H to bring them back</small></button>
+  <button class="item" id="helpBtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.9-1.1 1.7v.4M12 16.8v.2"/></svg>Things to do</button>
+  <ul class="todo" id="help" hidden>
+    <li><b>Wipe</b> the misted glass — drag across it</li>
+    <li><b>Breathe</b> on it — hold still, then write</li>
+    <li><b>Knock</b> on the glass, watch the drops run</li>
+    <li><b>Candle</b>, <b>lamp</b>, <b>tea</b>, <b>teapot</b> — tap them</li>
+    <li><b>Tape</b> — hover it for the controls</li>
+    <li><b>Handle</b> — open the window</li>
+    <li><b>Clock</b> — hold it to let the day pass</li>
+  </ul>
+</div>
+
+<!-- follows the cassette deck -->
+<div class="tape-panel" id="tapePanel">
+  <div class="tp-head">
+    <div class="tp-reel"><i></i></div>
+    <div class="tp-meta"><p class="tp-title" id="tapeTitle">Lake Song</p><p class="tp-side" id="tapeSide">Side A</p></div>
+    <p class="tp-time" id="tapeTime">—</p>
+  </div>
+  <div class="tp-prog"><i id="tapeProg"></i></div>
+  <div class="tp-row">
+    <button data-key="rew" aria-label="Previous song"><svg viewBox="0 0 24 24"><path d="M11 7 4 12l7 5zM20 7l-7 5 7 5z"/></svg></button>
+    <button data-key="toggle" class="tp-play" aria-label="Play or stop"><svg class="p" viewBox="0 0 24 24"><path d="M8 5.5v13L19 12z"/></svg><svg class="s" viewBox="0 0 24 24"><rect x="7" y="6" width="3.6" height="12" rx="1"/><rect x="13.4" y="6" width="3.6" height="12" rx="1"/></svg></button>
+    <button data-key="ff" aria-label="Next song"><svg viewBox="0 0 24 24"><path d="M13 7l7 5-7 5zM4 7l7 5-7 5z"/></svg></button>
+    <label class="tp-vol"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/></svg><input type="range" id="tapeVol" min="0" max="1" step="0.01" aria-label="Tape volume"></label>
+  </div>
+</div>
 
 <p class="caption" id="caption"></p>
 <p class="toast" id="toast" aria-live="polite"></p>
@@ -77,6 +118,6 @@
 </div>
 
 <noscript><p class="nojs">Stillwater needs JavaScript and WebGL.</p></noscript>
-<script type="module" src="src/main.js?v=8"></script>
+<script type="module" src="src/main.js?v=9"></script>
 </body>
 </html>

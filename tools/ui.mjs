@@ -1,0 +1,23 @@
+import puppeteer from 'puppeteer-core';
+const out = process.argv[2], W = +(process.argv[3] || 1440), H = +(process.argv[4] || 860);
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu', '--autoplay-policy=no-user-gesture-required'] });
+const page = await browser.newPage();
+await page.setViewport({ width: W, height: H });
+page.on('pageerror', e => console.log('[pageerror]', e.stack));
+await page.goto('http://localhost:8765/?tod=2.2', { waitUntil: 'networkidle0' });
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+await wait(3000); await page.click('#enterBtn'); await wait(1800);
+await page.click('[data-weather="snow"]'); await wait(300);
+await page.click('[data-pop="sound"]'); await wait(300);
+await page.screenshot({ path: `${out}/ui1.png` });
+await page.click('[data-pop="time"]'); await wait(300);
+await page.screenshot({ path: `${out}/ui2.png` });
+await page.keyboard.press('Escape');
+// hover the deck -> tape panel
+const d = await page.evaluate(() => { const v = new __app.camera.position.constructor(); __app.room.deck.root.getWorldPosition(v); v.y += 0.07; v.project(__app.camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; });
+if (W < 600) { await page.click('#tapeChip'); } else await page.mouse.move(...d); await wait(500);
+await page.click('#tapePanel [data-key="toggle"]'); await wait(16000);
+await page.mouse.move(d[0], d[1] - 5); await wait(400);
+await page.screenshot({ path: `${out}/ui3.png` });
+console.log(JSON.stringify(await page.evaluate(() => ({ w: __app.state.weather, tape: __app.tape.on, st: __app.tape.state, winter: +__app.cur.winter.toFixed(2) }))));
+await browser.close();
