@@ -307,7 +307,11 @@ function frame(now) {
   // the rain breathes on its own around the chosen intensity
   const rainAuto = THREE.MathUtils.clamp(state.rain + Math.sin(time / 170) * 0.12 + Math.sin(time / 53) * 0.06, 0, 1);
   cur.rain = approach(cur.rain, state.rain < 0.04 ? 0 : rainAuto, 0.4, dt);
-  cur.open = approach(cur.open, state.open ? 1 : 0, 2.2, dt);
+  const wasOpen = cur.open;
+  // closing accelerates into the frame; opening eases out
+  if (state.open) cur.open = approach(cur.open, 1, 2.2, dt);
+  else cur.open = Math.max(0, cur.open - dt * (0.35 + (1 - cur.open) * 2.2));
+  if (wasOpen > 0 && cur.open === 0) audio.shut();
   cur.lamp = approach(cur.lamp, state.lamp ? 1 : 0, 5, dt);
   cur.wet = approach(cur.wet, cur.rain > 0.1 ? 1 : 0, 0.05, dt);
   const winter = cur.winter;

@@ -374,56 +374,62 @@ export class Ambience {
     this._noiseHit(t, this.short, 'bandpass', 2600 * f, 2, 0.35, 0.001, 0.025);
     this._noiseHit(t + 0.03, this.short, 'bandpass', 1500 * f, 2, 0.2, 0.001, 0.03);
   }
+  // metal: a click with a short bright ring
+  _metalClick(t, a = 1, f = 1) {
+    this._noiseHit(t, this.short, 'bandpass', 3800 * f, 2.5, 0.22 * a, 0.0008, 0.012);
+    this._noiseHit(t + 0.004, this.short, 'highpass', 6000, 0.7, 0.08 * a, 0.0005, 0.008);
+    [2870, 4630, 6950].forEach((fr, i) => { const o = this.ctx.createOscillator(); o.frequency.value = fr * f * (0.98 + Math.random() * 0.04); this._env(o, t, 0.012 * a / (i + 1), 0.0008, 0.09 + Math.random() * 0.05).connect(this.sfx); o.start(t); o.stop(t + 0.25); });
+  }
+  // wood: a dull knock where the sash meets the frame
+  _woodThud(t, a = 1) {
+    const o = this.ctx.createOscillator(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(85, t + 0.07);
+    this._env(o, t, 0.3 * a, 0.002, 0.07).connect(this.sfx); o.start(t); o.stop(t + 0.15);
+    this._noiseHit(t, this.pink, 'bandpass', 420, 1.2, 0.35 * a, 0.002, 0.06);
+    this._noiseHit(t, this.short, 'bandpass', 1600, 1.5, 0.12 * a, 0.001, 0.02);
+  }
+  // hinge creak: stick-slip, a train of tiny irregular impulses through two wooden resonances
+  _creak(t, dur, a = 1, pitch = 1) {
+    const ctx = this.ctx, out = ctx.createGain(); out.gain.value = a;
+    const r1 = this._biq('bandpass', 620 * pitch, 14), r2 = this._biq('bandpass', 1350 * pitch, 18), r3 = this._biq('bandpass', 2400 * pitch, 10);
+    const mix = ctx.createGain(); mix.gain.value = 1;
+    mix.connect(r1); mix.connect(r2); mix.connect(r3);
+    const g1 = ctx.createGain(); g1.gain.value = 1; const g2 = ctx.createGain(); g2.gain.value = 0.6; const g3 = ctx.createGain(); g3.gain.value = 0.25;
+    r1.connect(g1).connect(out); r2.connect(g2).connect(out); r3.connect(g3).connect(out);
+    // the resonance drifts as the load on the hinge changes
+    r1.frequency.setValueAtTime(620 * pitch, t); r1.frequency.linearRampToValueAtTime(560 * pitch, t + dur);
+    r2.frequency.setValueAtTime(1350 * pitch, t); r2.frequency.linearRampToValueAtTime(1500 * pitch, t + dur);
+    out.connect(this.sfx);
+    const imp = ctx.createBuffer(1, 64, ctx.sampleRate); const d = imp.getChannelData(0); for (let i = 0; i < 64; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / 9);
+    let tt = t;
+    while (tt < t + dur) {
+      const k = (tt - t) / dur, env = Math.sin(Math.PI * Math.min(1, k * 1.15)) ** 0.7;
+      const src = ctx.createBufferSource(); src.buffer = imp;
+      const g = ctx.createGain(); g.gain.value = (0.5 + Math.random() * 0.8) * env * 0.9;
+      src.connect(g).connect(mix); src.start(tt);
+      // stick-slip rate wanders between ~25 and ~70 per second, sometimes catching
+      const rate = 25 + 45 * (0.5 + 0.5 * Math.sin(k * 9 + Math.random())) ;
+      tt += (1 / rate) * (0.6 + Math.random() * 0.8) + (Math.random() < 0.06 ? 0.03 : 0);
+    }
+  }
   latch(open) {
+    if (!this.ok()) return; const t = this.ctx.currentTime + 0.01;
+    if (open) {
+      this._metalClick(t, 1, 1);                         // the cockspur lifts off its keep
+      this._metalClick(t + 0.07, 0.5, 0.85);
+      this._woodThud(t + 0.16, 0.45);                    // the sash unsticks from the frame
+      this._noiseHit(t + 0.17, this.short, 'bandpass', 5200, 3, 0.04, 0.001, 0.05); // the glass ticks
+      this._creak(t + 0.22, 0.55 + Math.random() * 0.2, 0.55, 0.95 + Math.random() * 0.1);
+    } else {
+      this._creak(t + 0.05, 0.55 + Math.random() * 0.15, 0.45, 1.05 + Math.random() * 0.1);
+    }
+  }
+  /** the sash lands in the frame (called from the animation), then the handle drops into its keep */
+  shut() {
     if (!this.ok()) return; const t = this.ctx.currentTime + 0.005;
-    this._noiseHit(t, this.short, 'bandpass', 1300, 2, 0.4, 0.001, 0.05);
-    this._noiseHit(t + 0.06, this.short, 'bandpass', 900, 2, 0.3, 0.001, 0.06);
-    // the sash creaks on its hinges
-    const o = this.ctx.createOscillator(); o.type = 'sawtooth';
-    o.frequency.setValueAtTime(open ? 260 : 320, t + 0.15); o.frequency.linearRampToValueAtTime(open ? 330 : 240, t + 0.9);
-    const am = this.ctx.createOscillator(); am.frequency.value = 23; const ag = this.ctx.createGain(); ag.gain.value = 0.5;
-    const g = this._env(o.connect(this._biq('bandpass', 700, 4)), t + 0.15, 0.03, 0.1, 0.7);
-    am.connect(ag).connect(g.gain);
-    g.connect(this.sfx); o.start(t + 0.15); am.start(t + 0.15); o.stop(t + 1.1); am.stop(t + 1.1);
-    this._noiseHit(t + 0.1, this.pink, 'lowpass', 600, 0.7, 0.2, 0.2, 1.2); // whoosh of air
-  }
-  clatter(k = 1) {
-    if (!this.ok()) return; const t0 = this.ctx.currentTime + 0.005;
-    [0, 0.11, 0.19, 0.24].forEach((dt, i) => {
-      const t = t0 + dt, a = k * [0.5, 0.25, 0.12, 0.06][i];
-      this._noiseHit(t, this.short, 'bandpass', 2500 + Math.random() * 2000, 1.5, a * 0.6, 0.001, 0.03);
-      [2350, 3920, 5610, 7200].forEach(f => { const o = this.ctx.createOscillator(); o.frequency.value = f * (0.97 + Math.random() * 0.06); this._env(o, t, a * 0.05, 0.001, 0.12 + Math.random() * 0.15).connect(this.sfx); o.start(t); o.stop(t + 0.4); });
-    });
-  }
-  splash(k = 1) {
-    if (!this.ok()) return; const t = this.ctx.currentTime + 0.02;
-    this._noiseHit(t, this.pink, 'lowpass', 1600, 0.7, 0.35 * k, 0.01, 0.35);
-    this._noiseHit(t, this.white, 'bandpass', 3500, 0.8, 0.08 * k, 0.005, 0.2);
-  }
-  gush(rate) {
-    if (!this.ok() || Math.random() > 0.7) return; const t = this.ctx.currentTime + Math.random() * 0.02;
-    const a = Math.min(0.25, 0.05 + rate * 0.12);
-    this._noiseHit(t, this.pink, 'bandpass', 380 + Math.random() * 900, 5, a, 0.004, 0.035 + Math.random() * 0.04);
-  }
-  pour(fill) {
-    if (!this.ok()) return; const t = this.ctx.currentTime + Math.random() * 0.016;
-    // a filling cup: the resonance climbs as the air column shortens
-    this._noiseHit(t, this.pink, 'bandpass', 520 + fill * 1100 + Math.random() * 80, 9, 0.16, 0.004, 0.05);
-    if (Math.random() < 0.5) this._noiseHit(t, this.white, 'highpass', 4000, 0.7, 0.02, 0.002, 0.03);
-  }
-  pourEnd() {}
-  plink(k = 0.5) {
-    if (!this.ok()) return; const t = this.ctx.currentTime + 0.005;
-    const o = this.ctx.createOscillator(); const f = 1200 + Math.random() * 1600;
-    o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.03);
-    this._env(o, t, 0.03 * k, 0.001, 0.04).connect(this.sfx); o.start(t); o.stop(t + 0.08);
-  }
-  drip(k = 0.5) {
-    if (!this.ok()) return; const t = this.ctx.currentTime + 0.005;
-    const o = this.ctx.createOscillator(); const f = 700 + Math.random() * 500;
-    o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.7, t + 0.04);
-    const lp = this._biq('lowpass', 1800, 0.7);
-    this._env(o, t, 0.035 * k, 0.001, 0.07).connect(lp).connect(this.sfx); o.start(t); o.stop(t + 0.12);
+    this._woodThud(t, 1);
+    this._noiseHit(t + 0.004, this.short, 'bandpass', 5200, 3, 0.07, 0.001, 0.06);
+    this._metalClick(t + 0.28, 1, 1.05);
+    this._metalClick(t + 0.33, 0.4, 0.9);
   }
   thunder(dist = 1) {
     if (!this.ok()) return; const t = this.ctx.currentTime + 0.4 + dist * 2.5;
