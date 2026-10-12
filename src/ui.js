@@ -44,7 +44,7 @@ export function initUI(actions) {
   (() => {
     const h = S.hour ?? new Date().getHours(), late = h >= 21 || h < 5;
     const t = S.weather === 'snow' ? "It's snowing<br>on the <em>lake.</em>" : S.weather === 'clear' ? (late ? 'A quiet night<br>by the <em>lake.</em>' : 'A still day<br>by the <em>lake.</em>') : "It's raining<br>on the <em>lake.</em>";
-    $('#enterTitle').innerHTML = t;
+    const et = $('#enterTitle'); if (et) et.innerHTML = t;
   })();
   if (new URLSearchParams(location.search).get('ui') === '0') { veil.remove(); body.classList.add('bare'); entered = true; }
 
