@@ -17,7 +17,7 @@ body.ready .veil { opacity: 0; }
 /* entry */
 .enter { position: fixed; inset: 0; z-index: 15; display: grid; place-content: center; justify-items: center; text-align: center; padding: 24px;
   background: radial-gradient(ellipse at 50% 60%, rgba(10, 8, 6, .35), rgba(10, 8, 6, .82)); transition: opacity 1.4s ease, visibility 1.4s; }
-.enter.gone { opacity: 0; visibility: hidden; }
+.enter.gone { opacity: 0; visibility: hidden; pointer-events: none; }
 .eyebrow { margin: 0 0 18px; font-size: 12px; letter-spacing: .34em; text-transform: uppercase; color: var(--ink-2); }
 .enter h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: clamp(48px, 7.5vw, 104px); line-height: .95; letter-spacing: -.01em; }
 .enter h1 em { font-style: italic; }

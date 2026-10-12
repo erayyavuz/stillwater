@@ -1,0 +1,10 @@
+import puppeteer from 'puppeteer-core';
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 860 });
+await page.evaluateOnNewDocument(() => { window.__ft = []; let l = 0; const f = (t) => { if (l) __ft.push([t, t - l]); l = t; requestAnimationFrame(f); }; requestAnimationFrame(f); });
+await page.goto('http://localhost:8765/?ui=0&tod=2', { waitUntil: 'networkidle0' });
+await new Promise(r => setTimeout(r, 25000));
+const r = await page.evaluate(() => { const big = __ft.filter(([t, d]) => d > 50).map(([t, d]) => [Math.round(t / 100) / 10, Math.round(d)]); return { frames: __ft.length, hitches: big.slice(0, 40), ready: __app.tape.buffers.filter(Boolean).length }; });
+console.log(JSON.stringify(r));
+await browser.close();

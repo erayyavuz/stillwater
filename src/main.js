@@ -282,6 +282,7 @@ function tapeKey(part) {
   tapeBump = 1;
 }
 tape.onSong = (t) => ui.toast(t);
+tape.onWait = () => ui.toast('Rewinding…');
 const actions = {
   audio, tape,
   breathe(on) { breathe = on ? 1 : 0; breatheT = 0; },
@@ -443,7 +444,7 @@ function frame(now) {
   if (!ready) { ready = true; document.body.classList.add('ready'); window.__ready = true; }
   requestAnimationFrame(frame);
 }
-setTimeout(() => tape.preload(), 2500);
+setTimeout(() => tape.preload(), 0);
 room.loadProps().then(() => {
   teaSys = new Tea(scene, room.teaScene, audio);
   teaSys.place(0.2, 0.3, -0.02, 0.29);

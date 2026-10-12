@@ -8,12 +8,14 @@ page.on('console', m => { if (['error', 'warning'].includes(m.type())) logs.push
 page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
 await page.goto('http://localhost:8765/?tod=2&rain=0.3&cam=0.45,1.12,0.62,0.5,1.02,0.2', { waitUntil: 'networkidle0' });
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
-await wait(2500); await page.click("#enterBtn"); await wait(14000);
+await wait(2800); await page.click("#enterBtn"); await wait(300);
 const keyXY = (k) => page.evaluate((k) => { const v = new __app.camera.position.constructor(); __app.room.deck.keys[k].key.children[0].getWorldPosition(v); v.project(__app.camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, k);
 const st = () => page.evaluate(() => { const t = __app.tape; return { on: t.on, state: t.state, song: t.song, title: t.title(), pos: +t.position().toFixed(2), level: +t.level().toFixed(3), vol: +t.vol.toFixed(2), ready: t.buffers.filter(Boolean).length }; });
+await page.evaluate(() => { window.__calls = []; const T = __app.tape; for (const k of ['play', 'stop', 'wind']) { const f = T[k].bind(T); T[k] = (...a) => { __calls.push(k + ':' + T.on + ':' + T.state); return f(...a); }; } const P = __app.pick; window.__pk = (x, y) => { const r = P(x, y); return r && [r.name, r.part]; }; });
+logs.push('pick play ' + JSON.stringify(await page.evaluate((xy) => __pk(...xy), await keyXY('play'))));
 const t0 = Date.now();
 await page.mouse.click(...await keyXY('play'));
-logs.push('after play ' + JSON.stringify(await st()));
+logs.push('after play ' + JSON.stringify(await st()) + ' calls ' + JSON.stringify(await page.evaluate(() => __calls)));
 for (let i = 0; i < 20; i++) { await wait(500); const s = await st(); if (s.state === 'play' && s.level > 0) { logs.push(`playing after ${(Date.now() - t0) / 1000}s ` + JSON.stringify(s)); break; } }
 await wait(2500);
 logs.push('3s later ' + JSON.stringify(await st()));

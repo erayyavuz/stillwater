@@ -98,12 +98,40 @@ export class Tape {
     // leader tape: hiss, a few crackles, then the music
     this.crackle(t + 0.3, 6);
     const token = this.token = Symbol();
-    const leader = this.pos[this.song] < 0.5 ? 1.6 : 0.35;
-    Promise.all([this.load(this.song), new Promise(r => setTimeout(r, leader * 1000))]).then(() => {
+    const ready = !!this.buffers[this.song];
+    if (!ready) {
+      // not rendered yet: the deck rewinds to the start of the song meanwhile
+      this.state = 'wind'; this.speed = -9;
+      this.motor.gain.setTargetAtTime(0.01, t, 0.05); this.motorOsc.frequency.setTargetAtTime(380, t, 0.15);
+      this.onWait && this.onWait();
+      this.windNoise(true);
+    }
+    const leader = this.pos[this.song] < 0.5 ? 1.4 : 0.35;
+    this.load(this.song).then(() => {
       if (this.token !== token || !this.on) return;
-      this.startSource(true);
-      // render the others while the tape plays
+      if (!ready) {
+        this.windNoise(false);
+        const n = this.audio.ctx.currentTime;
+        this.motor.gain.setTargetAtTime(0.004, n, 0.05); this.motorOsc.frequency.setTargetAtTime(180, n, 0.1);
+        this.state = 'leader'; this.speed = 1; this.crackle(n + 0.1, 4);
+        this.audio.tape && this.audio.tape(true);
+      }
+      setTimeout(() => { if (this.token === token && this.on) this.startSource(true); }, leader * 1000);
     });
+  }
+  windNoise(on) {
+    const ctx = this.audio.ctx, t = ctx.currentTime;
+    if (on && !this.windSrc) {
+      const s = ctx.createBufferSource(); s.buffer = this.audio.pink; s.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 1.2;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 9; const lg = ctx.createGain(); lg.gain.value = 600; lfo.connect(lg).connect(bp.frequency); lfo.start();
+      const g = ctx.createGain(); g.gain.value = 0; g.gain.setTargetAtTime(0.05, t, 0.1);
+      s.connect(bp).connect(g).connect(this.input); s.start();
+      this.windSrc = { s, g, lfo };
+    } else if (!on && this.windSrc) {
+      const w = this.windSrc; this.windSrc = null;
+      w.g.gain.setTargetAtTime(0, t, 0.05); w.s.stop(t + 0.3); w.lfo.stop(t + 0.3);
+    }
   }
   stop() {
     if (!this.on) return;
@@ -121,6 +149,7 @@ export class Tape {
     this.hiss.gain.setTargetAtTime(0, t + 0.1, 0.05);
     this.hum.gain.setTargetAtTime(0, t + 0.1, 0.05);
     this.motor.gain.setTargetAtTime(0, t, 0.05);
+    this.windNoise(false);
     this.state = 'stop';
     this.speed = 0;
   }
