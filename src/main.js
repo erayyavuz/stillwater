@@ -4,6 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Outside } from './outside/world.js';
@@ -123,7 +124,7 @@ const audio = new Ambience();
 const tape = new Tape(audio);
 
 // ---------- post ----------
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: mobile ? 2 : 4 }));
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 0 }));
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.38, 0.55, 1.35);
 composer.addPass(bloom);
@@ -143,6 +144,8 @@ const finish = new ShaderPass({
       gl_FragColor = vec4(c, 1.);
     }`,
 });
+const fxaa = new ShaderPass(FXAAShader);
+composer.addPass(fxaa);
 composer.addPass(finish);
 
 function resize() {
@@ -166,6 +169,7 @@ function resize() {
   for (const m of glassMats) m.uniforms.uRes.value.copy(res);
   backdrop.material.uniforms.uRes.value.copy(res);
   finish.uniforms.uRes.value.copy(res);
+  fxaa.material.uniforms.resolution.value.set(1 / res.x, 1 / res.y);
   bloom.resolution.set(w / 2, h / 2);
 }
 addEventListener('resize', resize);
