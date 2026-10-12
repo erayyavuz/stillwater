@@ -1,0 +1,24 @@
+import puppeteer from 'puppeteer-core';
+const out = process.argv[2], base = process.argv[3] || 'http://localhost:8765/';
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu', '--autoplay-policy=no-user-gesture-required'] });
+const page = await browser.newPage();
+await page.emulate({ viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' });
+const cdp = await page.createCDPSession();
+await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 60, downloadThroughput: 1.5e6, uploadThroughput: 5e5 }); // ~12 Mbit
+const logs = []; page.on('pageerror', e => logs.push('[pageerror] ' + e.message));
+const t0 = Date.now();
+page.goto(base + '?tod=2.6');
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+await wait(2500); await page.screenshot({ path: `${out}/mo0.png` });
+logs.push('progress@2.5s ' + await page.evaluate(() => (window.__loadP || 0).toFixed(2)));
+await page.waitForFunction(() => document.getElementById('enter').classList.contains('loaded'), { timeout: 120000 }); await wait(400);
+logs.push(`ready after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+await page.screenshot({ path: `${out}/mo1.png` });
+await page.tap('#enterBtn'); await wait(2500);
+await page.screenshot({ path: `${out}/mo2.png` });
+await page.tap('[data-pop="weather"]'); await wait(400);
+await page.screenshot({ path: `${out}/mo3.png` });
+await page.tap('[data-weather="snow"]'); await wait(300);
+logs.push('weather ' + await page.evaluate(() => __app.state.weather));
+console.log(logs.join('\n'));
+await browser.close();

@@ -10,7 +10,17 @@ import { frameRect, bar, SASH, SASH_W, FRAME, FRAME_W, CASING, CASING_W, MUNTIN 
 export const WIN = { x0: -0.6, x1: 0.6, y0: 0.97, y1: 2.13 }; // glass extents (both sashes)
 export const SILL_Y = 0.95;
 
-const texLoader = new THREE.TextureLoader();
+// Where things stand on the sill. Narrow screens get a closer, two-row arrangement so it all fits.
+export const PORTRAIT = innerWidth / innerHeight < 0.85;
+export const LAYOUT = PORTRAIT ? {
+  lamp: [-0.4, 0.33, 0.4, 0.72], plant: [-0.29, 0.12, 0.8, 0.6], candle: [-0.19, 0.32, 0],
+  pot: [-0.01, 0.31], cup: [0.18, 0.35], tape: [0.31, 0.12, -0.12], clock: [0.43, 0.36, -0.6],
+} : {
+  lamp: [-0.74, 0.28, 0.4, 0.9], plant: [-0.5, 0.14, 0.8, 1], candle: [-0.27, 0.25, 0],
+  pot: [-0.02, 0.29], cup: [0.2, 0.3], tape: [0.52, 0.2, -0.28], clock: [0.82, 0.3, -0.5],
+};
+
+const texLoader = new THREE.TextureLoader(THREE.DefaultLoadingManager);
 function pbr(name, repeat = [1, 1], opts = {}) {
   const load = (f, srgb) => {
     const t = texLoader.load(`assets/tex/${name}/${f}.jpg`);
@@ -201,7 +211,7 @@ export class Room {
   }
 
   async loadProps() {
-    const loader = new GLTFLoader();
+    const loader = new GLTFLoader(THREE.DefaultLoadingManager);
     loader.setMeshoptDecoder(MeshoptDecoder);
     const load = (id) => loader.loadAsync(`assets/models/${id}.glb`).then(g => {
       g.scene.traverse(o => {
@@ -224,11 +234,12 @@ export class Room {
     const tape = this.deck.root;
     const put = (o, x, z, ry = 0, s = 1) => { o.position.set(x, SILL_Y, z); o.rotation.y = ry; o.scale.setScalar(s); this.group.add(o); return o; };
 
-    put(lamp, -0.74, 0.28, 0.4, 0.9);
-    put(plant, -0.5, 0.14, 0.8);
-    put(candle, -0.27, 0.25, 0);
-    put(tape, 0.52, 0.2, -0.28);
-    put(clock, 0.82, 0.3, -0.5);
+    const L = LAYOUT;
+    put(lamp, L.lamp[0], L.lamp[1], L.lamp[2], L.lamp[3]);
+    put(plant, L.plant[0], L.plant[1], L.plant[2], L.plant[3]);
+    put(candle, L.candle[0], L.candle[1], L.candle[2]);
+    put(tape, L.tape[0], L.tape[1], L.tape[2]);
+    put(clock, L.clock[0], L.clock[1], L.clock[2]);
     this.teaScene = tea;
 
     this.props = { candle, lamp, tape, clock, plant };
@@ -245,14 +256,14 @@ export class Room {
 
     // warm lights
     this.candleLight = new THREE.PointLight(0xff9a48, 0, 5, 2);
-    this.candleLight.position.set(-0.27, SILL_Y + 0.29, 0.25);
+    this.candleLight.position.set(LAYOUT.candle[0], SILL_Y + 0.29, LAYOUT.candle[1]);
     this.candleLight.castShadow = false; // a point-light shadow per pixel was the main cost
     this.candleLight.shadow.mapSize.set(512, 512);
     this.candleLight.shadow.bias = -0.002;
     this.candleLight.shadow.camera.near = 0.03;
     this.scene.add(this.candleLight);
     this.lampLight = new THREE.PointLight(0xffb26a, 0, 7, 2);
-    this.lampLight.position.set(-0.74, SILL_Y + 0.47, 0.28);
+    this.lampLight.position.set(LAYOUT.lamp[0], SILL_Y + 0.52 * LAYOUT.lamp[3], LAYOUT.lamp[1]);
     this.lampLight.castShadow = true;
     this.lampLight.shadow.mapSize.set(512, 512);
     this.lampLight.shadow.bias = -0.002;

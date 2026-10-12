@@ -8,13 +8,14 @@ import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Outside } from './outside/world.js';
-import { Room, WIN, SILL_Y } from './room.js';
+import { Room, WIN, SILL_Y, LAYOUT } from './room.js';
 import { Drops, Fog, createGlassMaterial } from './glass.js';
 import { CandleFlame, Steam } from './cozy.js';
 import { Ambience } from './audio.js';
 import { Tape } from './music.js';
 import { Tea } from './tea.js';
 import { initUI } from './ui.js';
+THREE.DefaultLoadingManager.onProgress = (url, done, total) => { window.__loadP = done / total; window.dispatchEvent(new CustomEvent('sw-progress', { detail: done / total })); };
 
 const params = new URLSearchParams(location.search);
 const mobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
@@ -112,7 +113,7 @@ const glassMats = room.sashes.map(s => {
 });
 
 // cozy bits
-const flame = new CandleFlame(new THREE.Vector3(-0.27, SILL_Y + 0.221, 0.25));
+const flame = new CandleFlame(new THREE.Vector3(LAYOUT.candle[0], SILL_Y + 0.209, LAYOUT.candle[1]));
 scene.add(flame.group);
 flame.attachSmoke(scene);
 if (!state.candle) { flame.target = 0; flame.lit = 0; }
@@ -156,10 +157,12 @@ function resize() {
   composer.setSize(w, h);
   camera.aspect = w / h;
   const portrait = w / h < 0.85;
-  camera.fov = portrait ? 60 : 50;
+  camera.fov = portrait ? 58 : 50;
+  // portrait: step back until the whole sill (about 1.1 m) fits across the screen
+  const sillD = Math.min(2.6, Math.max(1.4, 0.98 / (2 * Math.tan(THREE.MathUtils.degToRad(58) / 2) * (w / h))));
   // portrait: step in and favour the left pane, the candle and the tea
-  camHome.set(portrait ? -0.08 : 0, portrait ? 1.48 : 1.43, portrait ? 1.42 : 1.5);
-  lookHome.set(portrait ? -0.08 : 0, portrait ? 1.42 : 1.37, 0);
+  camHome.set(0, portrait ? 1.62 : 1.43, portrait ? 0.32 + sillD : 1.5);
+  lookHome.set(0, portrait ? 1.36 : 1.37, 0);
   camera.updateProjectionMatrix();
   const W = Math.round(w * Math.min(dpr, 1.25) * Q.out), H = Math.round(h * Math.min(dpr, 1.25) * Q.out);
   outRT.setSize(W, H);
@@ -354,9 +357,9 @@ function frame(now) {
   const bz = breathe ? ss(0, 22, breatheT) : 0;
   camShake = Math.max(0, camShake - dt * 0.03);
   if (Math.abs(mouseS.x - mouse.x) < 1e-4) mouseS.x = mouse.x; if (Math.abs(mouseS.y - mouse.y) < 1e-4) mouseS.y = mouse.y;
-  camera.position.set(camHome.x + mouseS.x * 0.05, camHome.y - mouseS.y * 0.025 + bz * 0.04, camHome.z - bz * 0.55);
+  camera.position.set(camHome.x, camHome.y + bz * 0.04, camHome.z - bz * 0.55);
   if (camShake > 1e-4) { camera.position.x += (Math.random() - 0.5) * camShake; camera.position.y += (Math.random() - 0.5) * camShake; }
-  camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(mouseS.x * 0.09, -mouseS.y * 0.04 + bz * 0.1, 0)));
+  camera.lookAt(tmpV.copy(lookHome).add(new THREE.Vector3(0, bz * 0.1, 0)));
   if (params.get('cam')) { const c = params.get('cam').split(',').map(Number); camera.position.set(c[0], c[1], c[2]); camera.lookAt(c[3], c[4], c[5]); }
   camera.updateMatrixWorld();
 
@@ -427,7 +430,7 @@ function frame(now) {
   const defocus = focusT > 0 ? 0.1 : 0.6;
   const night = e.night;
   const glows = glassMats[0].uniforms.uGlow.value;
-  [[flame.group.position, flame.lit * 0.22, 0.02], [room.lampLight ? room.lampLight.position : null, cur.lamp * 0.3, 0.035]].forEach(([p, k, sz], i) => {
+  [[flame.group.position, flame.lit * 0.1, 0.012], [room.lampLight ? room.lampLight.position : null, cur.lamp * 0.3, 0.035]].forEach(([p, k, sz], i) => {
     if (!p) return;
     tmpV.set(p.x, p.y, -p.z).project(camera);
     glows[i].set(tmpV.x * 0.5 + 0.5, tmpV.y * 0.5 + 0.5, sz, k * (0.15 + 0.85 * night));
@@ -474,13 +477,15 @@ function frame(now) {
   if (!ready) { ready = true; document.body.classList.add('ready'); window.__ready = true; }
   requestAnimationFrame(frame);
 }
-setTimeout(() => tape.preload(), 0);
 room.loadProps().then(() => {
+  if (!mobile) setTimeout(() => tape.preload(), 4000);
+  window.dispatchEvent(new Event('sw-ready'));
   teaSys = new Tea(scene, room.teaScene, audio);
-  teaSys.place(0.2, 0.3, -0.02, 0.29);
+  teaSys.place(LAYOUT.cup[0], LAYOUT.cup[1], LAYOUT.pot[0], LAYOUT.pot[1]);
   // the tea flows around everything standing on the sill
-  teaSys.addBlock(-0.74, 0.28, 0.1); teaSys.addBlock(-0.5, 0.14, 0.085); teaSys.addBlock(-0.27, 0.25, 0.05); teaSys.addBlock(0.82, 0.3, 0.05);
-  teaSys.addBlockRect(0.52, 0.2, 0.3, 0.07, -0.28);
+  const L = LAYOUT;
+  teaSys.addBlock(L.lamp[0], L.lamp[1], 0.11 * L.lamp[3]); teaSys.addBlock(L.plant[0], L.plant[1], 0.085 * L.plant[3]); teaSys.addBlock(L.candle[0], L.candle[1], 0.05); teaSys.addBlock(L.clock[0], L.clock[1], 0.05);
+  teaSys.addBlockRect(L.tape[0], L.tape[1], 0.3, 0.07, L.tape[2]);
   room.props.cup = teaSys.cup; room.props.saucer = teaSys.saucer; room.props.pot = teaSys.pot;
   if (!state.lamp) cur.lamp = 0;
   requestAnimationFrame((t) => { last = t; frame(t); });

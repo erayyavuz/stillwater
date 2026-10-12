@@ -1,0 +1,10 @@
+import puppeteer from 'puppeteer-core';
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu'] });
+const page = await browser.newPage();
+await page.emulate({ viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1' });
+page.on('pageerror', e => console.log('[pageerror]', e.stack));
+page.on('console', m => { if (m.type() === 'error') console.log('[err]', m.text()); });
+await page.goto('http://localhost:8765/?tod=2.6', { waitUntil: 'networkidle0' });
+await new Promise(r => setTimeout(r, 6000));
+console.log(await page.evaluate(() => [window.__loadP, document.getElementById('enterBtn').disabled, document.getElementById('enter').className]));
+await browser.close();

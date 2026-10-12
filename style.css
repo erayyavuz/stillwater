@@ -122,20 +122,23 @@ body.bare .caption { opacity: 0; }
 .link:hover { color: var(--ink); }
 .nojs { position: fixed; inset: 0; display: grid; place-content: center; }
 
+.mobile-only { display: none; }
 @media (max-width: 720px) {
-  .bar { bottom: 10px; gap: 4px; padding: 5px; flex-wrap: wrap; justify-content: center; width: calc(100vw - 20px); }
-  .seg button span { display: none; }
-  .seg button { padding: 0 11px; }
-  .inten { width: auto; flex: 1; min-width: 110px; }
-  .chip span { display: none; } .chip { width: 42px; padding: 0; justify-content: center; }
+  .mobile-only { display: flex; }
+  .bar { bottom: calc(10px + env(safe-area-inset-bottom)); gap: 2px; padding: 5px; }
+  .chip span { display: none; } .chip { width: 50px; height: 46px; padding: 0; justify-content: center; }
   .sep { display: none; }
-  .pop { bottom: 72px; }
-  .caption { bottom: 132px; max-width: calc(100vw - 32px); width: auto; white-space: normal; } .toast { bottom: 178px; }
+  #wxSlot .seg { width: 100%; margin-bottom: 14px; }
+  #wxSlot .seg button { flex: 1; justify-content: center; height: 46px; }
+  #wxSlot .inten { width: 100%; padding: 0 4px; }
+  .caption { display: none; }
+  .toast { bottom: auto; top: calc(62px + env(safe-area-inset-top)); font-size: 19px; }
+  header.chrome { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .tape-panel { width: min(340px, calc(100vw - 24px)); }
 }
 @media (max-width: 640px) {
   .chrome { padding: 12px 14px; }
   .brand { font-size: 20px; }
-  .caption { bottom: 18px; font-size: 12.5px; }
 }
 
 /* sleep timer: the room slowly goes dark */
@@ -144,3 +147,15 @@ body.bare .caption { opacity: 0; }
 .sleepchips button { height: 32px; padding: 0 12px; border-radius: 999px; background: var(--panel-2); font-size: 13px; color: var(--ink-2); }
 .sleepchips button.on { background: #f1e6d4; color: #20180f; }
 .sleepnote { margin: 0; padding: 0 10px 6px 44px; font-size: 12px; color: var(--ink-3); }
+
+/* loading */
+.loading { width: min(260px, 70vw); margin: 0 0 22px; }
+.lbar { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.lbar i { display: block; height: 100%; background: #e9b46e; transform-origin: left; transform: scaleX(.04); transition: transform .4s ease; }
+.loading p { margin: 10px 0 0; font-size: 12.5px; color: var(--ink-3); letter-spacing: .04em; }
+.enter.loaded .loading { opacity: 0; height: 0; margin: 0; overflow: hidden; transition: opacity .5s; }
+.btn[disabled] { opacity: .35; cursor: default; transform: none; }
+.enter:not(.loaded) .btn { display: none; }
+/* the veil hides the canvas until the room is there, but the entry text shows from the start */
+.veil { z-index: 14; }
+body.ready .veil { opacity: 0; }

@@ -30,13 +30,13 @@ export class Deck {
     const g = this.group;
     const tag = (o, part) => { o.traverse(m => { m.userData.part = part; if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); return o; };
 
-    const plastic = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.42, metalness: 0.0 });
+    const plastic = new THREE.MeshStandardMaterial({ color: 0x232325, roughness: 0.36, metalness: 0.0, envMapIntensity: 1.8 });
     const plasticDark = new THREE.MeshStandardMaterial({ color: 0x101011, roughness: 0.6 });
     const chrome = new THREE.MeshStandardMaterial({ color: 0xe8e8ea, metalness: 1, roughness: 0.12, envMapIntensity: 2 });
-    const alu = new THREE.MeshStandardMaterial({ map: brushed(1024, 512, '#a7a8a6'), metalness: 0.9, roughness: 0.38, envMapIntensity: 1.6 });
+    const alu = new THREE.MeshStandardMaterial({ map: brushed(1024, 512, '#c9cac6'), metalness: 0.75, roughness: 0.33, envMapIntensity: 2.4 });
 
     // body
-    const body = new THREE.Mesh(new RoundedBoxGeometry(W, H, D, 4, 0.012), plastic);
+    const body = new THREE.Mesh(new RoundedBoxGeometry(W, H, D, 6, 0.016), plastic);
     g.add(tag(body, 'body'));
 
     // front aluminium panel with the printing
@@ -65,12 +65,20 @@ export class Deck {
     g.add(tag(panel, 'body'), tag(panelPrint, 'body'));
 
     // speaker: perforated grille, chrome ring
-    const grilleTex = canvasTex(512, 512, (x, w) => {
-      x.fillStyle = '#2a2a2c'; x.fillRect(0, 0, w, w);
-      x.fillStyle = '#060606';
-      for (let yy = 8; yy < w; yy += 16) for (let xx = 8 + ((yy / 16) % 2) * 8; xx < w; xx += 16) { x.beginPath(); x.arc(xx, yy, 4.6, 0, Math.PI * 2); x.fill(); }
+    const grilleTex = canvasTex(1024, 1024, (x, w) => {
+      // the cone behind, seen through the holes
+      const cg = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+      cg.addColorStop(0, '#3a3530'); cg.addColorStop(0.12, '#141210'); cg.addColorStop(0.16, '#2b2723'); cg.addColorStop(0.7, '#1a1816'); cg.addColorStop(1, '#0c0b0a');
+      x.fillStyle = cg; x.fillRect(0, 0, w, w);
+      // the perforated plate on top: draw metal, punch holes so the cone shows
+      const m = document.createElement('canvas'); m.width = m.height = w; const mx = m.getContext('2d');
+      const mg = mx.createLinearGradient(0, 0, w, w); mg.addColorStop(0, '#b9bab6'); mg.addColorStop(1, '#8d8e8a');
+      mx.fillStyle = mg; mx.fillRect(0, 0, w, w);
+      mx.globalCompositeOperation = 'destination-out';
+      for (let yy = 10; yy < w; yy += 21) for (let xx = 10 + ((yy / 21 | 0) % 2) * 10.5; xx < w; xx += 21) { mx.beginPath(); mx.arc(xx, yy, 7, 0, Math.PI * 2); mx.fill(); }
+      x.drawImage(m, 0, 0);
     });
-    const grille = new THREE.Mesh(new THREE.CircleGeometry(0.052, 64), new THREE.MeshStandardMaterial({ map: grilleTex, metalness: 0.7, roughness: 0.45 }));
+    const grille = new THREE.Mesh(new THREE.CircleGeometry(0.052, 64), new THREE.MeshStandardMaterial({ map: grilleTex, metalness: 0.55, roughness: 0.4, envMapIntensity: 1.6 }));
     grille.position.set(-0.078, -0.012, D / 2 + 0.002);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.054, 0.0035, 12, 64), chrome);
     ring.position.copy(grille.position).add(new THREE.Vector3(0, 0, 0.001));
@@ -159,6 +167,18 @@ export class Deck {
     this.needle.geometry.translate(0, 0.0065, 0);
     this.needle.position.set(0.112, 0.0405, D / 2 + 0.0022);
     g.add(tag(vu, 'body'), tag(this.needle, 'body'));
+    // three-digit tape counter with a reset button
+    const ctrTex = canvasTex(256, 96, (x, w, h) => {
+      x.fillStyle = '#0d0d0e'; x.fillRect(0, 0, w, h);
+      for (let i = 0; i < 3; i++) { x.fillStyle = '#ece6d6'; x.fillRect(18 + i * 76, 12, 64, 72); x.fillStyle = '#1a1814'; x.font = 'bold 58px Helvetica'; x.textAlign = 'center'; x.fillText(['0', '4', '7'][i], 50 + i * 76, 68); }
+    });
+    const ctr = new THREE.Mesh(new THREE.PlaneGeometry(0.022, 0.0085), new THREE.MeshStandardMaterial({ map: ctrTex, roughness: 0.4 }));
+    ctr.position.set(0.072, 0.03, D / 2 + 0.0018);
+    g.add(tag(ctr, 'body'));
+    for (const [sx, sy] of [[-W / 2 + 0.012, H / 2 - 0.02], [W / 2 - 0.012, H / 2 - 0.02], [-W / 2 + 0.012, -H / 2 + 0.014], [W / 2 - 0.012, -H / 2 + 0.014]]) {
+      const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.0022, 0.0022, 0.001, 12), chrome);
+      sc.rotation.x = Math.PI / 2; sc.position.set(sx, sy, D / 2 + 0.0014); g.add(tag(sc, 'body'));
+    }
     // record LED
     this.led = new THREE.Mesh(new THREE.SphereGeometry(0.0022, 12, 8), new THREE.MeshStandardMaterial({ color: 0x3a0806, emissive: 0xff2a10, emissiveIntensity: 0 }));
     this.led.position.set(0.0365, 0.048, D / 2 + 0.002);

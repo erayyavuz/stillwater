@@ -40,6 +40,13 @@ export function initUI(actions) {
     setTimeout(() => toast('drag across the glass'), 2200);
   }
   $('#enterBtn').addEventListener('click', enter);
+  // loading: a real progress bar; the door opens when the room is ready
+  const enterBtn = $('#enterBtn'), prog = $('#loadBar'), plabel = $('#loadLabel');
+  enterBtn.disabled = true;
+  const setP = (p) => { prog.style.transform = `scaleX(${Math.max(0.04, p)})`; plabel.textContent = `Setting up the room · ${Math.round(p * 100)}%`; };
+  setP(window.__loadP || 0);
+  addEventListener('sw-progress', (e) => setP(e.detail));
+  addEventListener('sw-ready', () => { setP(1); veil.classList.add('loaded'); enterBtn.disabled = false; plabel.textContent = 'Ready'; });
   // the welcome line follows the weather and the hour
   (() => {
     const h = S.hour ?? new Date().getHours(), late = h >= 21 || h < 5;
@@ -59,10 +66,18 @@ export function initUI(actions) {
 
   // ---------------------------------------------------------------- popovers
   const bar = $('.bar');
+  // phones: weather + intensity live in a popover, the bar keeps one row of icons
+  const seg = $('.bar .seg'), intenW = $('#intenWrap'), slot = $('#wxSlot');
+  const placeWx = () => {
+    const small = innerWidth <= 720;
+    if (small && seg.parentElement !== slot) { slot.append(seg, intenW); }
+    else if (!small && seg.parentElement === slot) { bar.prepend(seg, intenW); }
+  };
+  placeWx(); addEventListener('resize', placeWx);
   const barTop = () => bar.getBoundingClientRect().top;
   const placePops = () => Object.values(pops).forEach(p => { p.style.bottom = (innerHeight - barTop() + 10) + 'px'; });
   addEventListener('resize', () => placePops());
-  const pops = { time: $('#popTime'), sound: $('#popSound'), more: $('#popMore') };
+  const pops = { weather: $('#popWeather'), time: $('#popTime'), sound: $('#popSound'), more: $('#popMore') };
   const openPop = (k) => {
     placePops();
     if (k) { tapePinned = false; chip.setAttribute('aria-expanded', false); }
@@ -144,7 +159,9 @@ export function initUI(actions) {
   // ---------------------------------------------------------------- hover caption
   const cap = $('#caption');
   let capT;
+  const touch = matchMedia('(pointer: coarse)').matches;
   function hover(name) {
+    if (touch) return;
     if (name === 'tape') tapeT = performance.now() + 2500;
     const text = name ? HINTS[name] : '';
     if (cap.dataset.name === (name || '')) return;
@@ -192,7 +209,13 @@ export function initUI(actions) {
   poke();
 
   // ---------------------------------------------------------------- reflect state
+  const WX_ICON = {
+    clear: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+    rain: '<path d="M7 14h10.2a3.8 3.8 0 0 0 .3-7.6A5.4 5.4 0 0 0 7.1 7.6 3.2 3.2 0 0 0 7 14z"/><path d="M8.5 17l-1 3M12.5 17l-1 3M16.5 17l-1 3"/>',
+    snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.6 4.6 12 6.8l2.4-2.2M9.6 19.4 12 17.2l2.4 2.2"/>',
+  };
   function sync() {
+    $('#wxIcon').innerHTML = WX_ICON[S.weather];
     $$('[data-weather]').forEach(b => b.classList.toggle('on', b.dataset.weather === S.weather));
     inten.disabled = S.weather === 'clear';
     inten.value = S.rain;
